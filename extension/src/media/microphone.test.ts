@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  isMicrophoneCapturing,
   requestMicrophoneStream,
   startMicrophoneCapture,
+  stopAllMicrophoneCapture,
   type MediaRecorderLike,
 } from "./microphone";
 
@@ -107,5 +109,85 @@ describe("startMicrophoneCapture", () => {
 
     expect(capture).toBeNull();
     expect(stopTrack).toHaveBeenCalledOnce();
+  });
+});
+
+// Regression guards for the 2026-09-13 privacy bug: the mic kept recording
+// and streaming after the panel was torn down, while the UI read
+// "NOT STARTED". Recording must run strictly between an explicit start and
+// stop, and must never be left running by any path.
+describe("microphone capture lifecycle guarantees", () => {
+  afterEach(() => stopAllMicrophoneCapture());
+
+  it("stops a previous capture when a new one starts", () => {
+    let first: FakeMediaRecorder | undefined;
+    let second: FakeMediaRecorder | undefined;
+
+    startMicrophoneCapture(
+      fakeStream(),
+      () => {},
+      () => (first = new FakeMediaRecorder()),
+      () => true,
+    );
+    startMicrophoneCapture(
+      fakeStream(),
+      () => {},
+      () => (second = new FakeMediaRecorder()),
+      () => true,
+    );
+
+    expect(first!.stopped).toBe(true);
+    expect(second!.stopped).toBe(false);
+  });
+
+  it("stopAllMicrophoneCapture() halts recording and releases the mic", () => {
+    let recorder: FakeMediaRecorder | undefined;
+    const stream = fakeStream();
+
+    startMicrophoneCapture(
+      stream,
+      () => {},
+      () => (recorder = new FakeMediaRecorder()),
+      () => true,
+    );
+    expect(isMicrophoneCapturing()).toBe(true);
+
+    stopAllMicrophoneCapture();
+
+    expect(recorder!.stopped).toBe(true);
+    expect(stream.getTracks()[0].stop).toHaveBeenCalled();
+    expect(isMicrophoneCapturing()).toBe(false);
+  });
+
+  it("does not forward a chunk delivered after stop()", () => {
+    const chunks: Blob[] = [];
+    let recorder: FakeMediaRecorder | undefined;
+
+    const capture = startMicrophoneCapture(
+      fakeStream(),
+      (chunk) => chunks.push(chunk),
+      () => (recorder = new FakeMediaRecorder()),
+      () => true,
+    );
+    capture!.stop();
+
+    // MediaRecorder can flush a final buffered chunk after stop(); it must
+    // not reach the socket once the user believes recording has ended.
+    recorder!.emit(new Blob(["late"]));
+
+    expect(chunks).toHaveLength(0);
+  });
+
+  it("treats stop() as idempotent", () => {
+    const capture = startMicrophoneCapture(
+      fakeStream(),
+      () => {},
+      () => new FakeMediaRecorder(),
+      () => true,
+    );
+
+    capture!.stop();
+    expect(() => capture!.stop()).not.toThrow();
+    expect(isMicrophoneCapturing()).toBe(false);
   });
 });

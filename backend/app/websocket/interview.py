@@ -16,6 +16,7 @@ code/transcript/hint events right now; recording state is Feature 12).
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from collections import deque
@@ -50,6 +51,8 @@ from app.interview.state import InterviewState, TranscriptEntry
 from app.providers.llm import get_llm_provider
 from app.providers.stt import get_stt_provider
 from app.providers.stt.base import STTSession
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -221,7 +224,29 @@ async def interview_socket(ws: WebSocket) -> None:
                     await _send_error(ws, 0, "no_active_session", "Send session.start first.", True)
                     continue
                 if record.stt_session is not None:
-                    await record.stt_session.send_audio(message["bytes"])
+                    try:
+                        await record.stt_session.send_audio(message["bytes"])
+                    except Exception:
+                        # A dead STT upstream must never kill the interview
+                        # (architecture.md §H). Before this guard existed, a
+                        # Deepgram close raised straight out of the ASGI
+                        # handler, dropped the client's WebSocket, and the
+                        # client's own reconnect/resume re-entered the same
+                        # failure — an infinite crash-reconnect loop observed
+                        # live on 2026-09-13.
+                        logger.exception("STT send failed; continuing without transcription")
+                        try:
+                            await record.stt_session.close()
+                        except Exception:
+                            pass
+                        record.stt_session = None
+                        await _send_error(
+                            ws,
+                            0,
+                            "stt_unavailable",
+                            "Transcription stopped; the interview continues without it.",
+                            True,
+                        )
                 record.last_seen = time.monotonic()
                 continue
 

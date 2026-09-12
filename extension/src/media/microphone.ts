@@ -14,6 +14,35 @@ export interface MicrophoneCapture {
   stop(): void;
 }
 
+// Module-level registry of the one capture allowed to exist at a time.
+//
+// GUARDRAIL (2026-09-13). The mic previously kept recording after the panel
+// was torn down: content/index.tsx removed the React host from the DOM on
+// SPA navigation without calling root.unmount(), so no component cleanup
+// ran, the MediaRecorder outlived its owner, and audio kept streaming while
+// the UI read "NOT STARTED" — observed live. Correctness here must not
+// depend on every caller remembering to stop what it started, so this
+// module enforces the invariant itself: starting a capture stops any
+// previous one, and stopAllMicrophoneCapture() is an unconditional kill
+// switch teardown paths can call without knowing what is running.
+let activeCapture: MicrophoneCapture | null = null;
+
+/**
+ * Unconditionally stops any in-flight microphone capture and releases the
+ * mic. Safe to call at any time, including when nothing is recording.
+ * Teardown paths should call this rather than assuming a component's
+ * cleanup ran.
+ */
+export function stopAllMicrophoneCapture(): void {
+  activeCapture?.stop();
+  activeCapture = null;
+}
+
+/** Test/diagnostic helper: is the microphone currently capturing? */
+export function isMicrophoneCapturing(): boolean {
+  return activeCapture !== null;
+}
+
 // Minimal structural subset of MediaRecorder this module needs.
 export interface MediaRecorderLike {
   start(timeslice?: number): void;
@@ -59,6 +88,10 @@ export function startMicrophoneCapture(
   createRecorder: MediaRecorderFactory = defaultRecorderFactory,
   isTypeSupported: (type: string) => boolean = MediaRecorder.isTypeSupported,
 ): MicrophoneCapture | null {
+  // Never run two recorders at once: a leaked one would keep streaming with
+  // nothing in the UI to indicate it.
+  stopAllMicrophoneCapture();
+
   const mimeType = pickSupportedMimeType(isTypeSupported);
   if (!mimeType) {
     for (const track of stream.getTracks()) track.stop();
@@ -66,15 +99,26 @@ export function startMicrophoneCapture(
   }
 
   const recorder = createRecorder(stream, mimeType);
+  let stopped = false;
   recorder.ondataavailable = (event) => {
+    // Guard the callback too: MediaRecorder can deliver a final buffered
+    // chunk after stop(), and that must not reach the socket once the user
+    // believes recording has ended.
+    if (stopped) return;
     if (event.data.size > 0) onChunk(event.data);
   };
   recorder.start(CHUNK_INTERVAL_MS);
 
-  return {
+  const capture: MicrophoneCapture = {
     stop() {
+      if (stopped) return; // idempotent
+      stopped = true;
       recorder.stop();
       for (const track of stream.getTracks()) track.stop();
+      if (activeCapture === capture) activeCapture = null;
     },
   };
+
+  activeCapture = capture;
+  return capture;
 }

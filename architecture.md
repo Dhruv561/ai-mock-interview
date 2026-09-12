@@ -159,6 +159,26 @@ The original decision put the WebSocket in the content script alongside the UI a
 - **Accepted cost:** `chrome.runtime` ports are JSON-only, so binary mic chunks are base64-encoded across the port (~33% overhead on a ~4.8KB chunk every 250ms). Verified working live. If this ever becomes a real cost, the escape hatch is moving mic capture into an offscreen document next to the socket — deliberately not done speculatively.
 - **Verified live 2026-09-13:** panel reaches `BACKEND CONNECTED`; full lifecycle `session.started` (stage intro) → `hint.requested` → `hint.response` rendered in the transcript → `session.end` → `interviewer.state` (stage review), with binary audio frames arriving throughout.
 
+#### B.2 Microphone lifecycle — PRIVACY-CRITICAL (added 2026-09-13 after a live defect)
+
+**The microphone must record only between an explicit user Start and Stop, and the recording indicator must never under-report.** This is a security/privacy invariant, not a UX preference — PRD NFR3 requires explicit permission, and a user who sees "NOT STARTED" must not be being recorded.
+
+**The defect (observed live, not theoretical):** after a LeetCode SPA navigation the panel reset to `NOT STARTED` while the mic kept capturing and streaming to the backend. Measured: 14 further audio frames in ~10s, with transcripts still arriving, after the UI showed the interview as not running.
+
+**Root cause:** `content/index.tsx`'s `unmount()` removed the React host element from the DOM but never called `root.unmount()` — the root returned by `createRoot()` wasn't even retained. Detaching a container does not unmount React or run effect cleanup, so the `MediaRecorder` (held in a `useRef` in `useMicrophoneCapture`) outlived its component. Its chunk callback closed over `socket.sendAudioChunk`, and the socket is a module-level singleton, so audio kept flowing. `mount()` then created a *second* root — so every navigation orphaned another live recorder.
+
+**Defences, deliberately layered — no single one is trusted:**
+1. `content/index.tsx` retains the root and calls `reactRoot.unmount()` **before** removing the host, so component cleanup actually runs. This is the root-cause fix.
+2. `useMicrophoneCapture` has a `useEffect` cleanup that stops capture on unmount — the mic must never outlive the component displaying that it is recording.
+3. A generation counter closes the async race: `start()` abandons its result (releasing the stream) if `stop()` or unmount happened while the permission prompt was open. Otherwise a late-resolving `getUserMedia` starts a recorder nothing holds.
+4. `start()` stops any existing capture first, so a double start cannot strand the first recorder.
+5. `microphone.ts` enforces "at most one capture" at module level and exposes `stopAllMicrophoneCapture()` as an unconditional kill switch, called by `unmount()` as belt and braces. Correctness must not depend on every caller remembering to stop what it started.
+6. `capture.stop()` is idempotent and gates the `ondataavailable` callback, so a final buffered chunk flushed after stop never reaches the socket.
+
+**Regression tests** cover unmount-stops-recording, stop-during-permission-prompt, double-start, post-stop chunk suppression, and the single-capture invariant. The unmount test was verified to **fail** against the pre-fix code — a guardrail that cannot fail is not a guardrail.
+
+**If you change any teardown path, re-check this invariant.** The failure is silent: nothing errors, nothing logs, and the only symptom is a live microphone with no indicator.
+
 ### C. React UI architecture
 
 - **Responsibility:** render the interview panel per the visual reference, driven entirely by a typed store.

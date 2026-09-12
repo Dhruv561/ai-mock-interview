@@ -16,6 +16,17 @@ export type ConnectionState = "connecting" | "open" | "reconnecting" | "closed";
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 15000;
 
+// Mic capture starts on the Start click, but `sessionId` only exists once
+// session.started comes back — so the first chunks are produced before there
+// is anywhere to send them. They used to be dropped, which quietly broke
+// real transcription: MediaRecorder puts the WebM/EBML container header in
+// its *first* chunk only, and every later chunk is a bare continuation
+// cluster. Deepgram can't identify a container it never received the header
+// for, so it closed the stream immediately (observed live 2026-09-13 — a log
+// full of `43 c3 81 00` clusters and not one `1a 45 df a3` header).
+// Buffering until the session opens keeps that header intact.
+const MAX_PENDING_AUDIO_CHUNKS = 20; // ~5s at the 250ms capture interval
+
 export interface InterviewSocket {
   send(event: ClientEvent): void;
   /**
@@ -63,6 +74,7 @@ export function connectInterviewSocket(
   let reconnectDelay = RECONNECT_BASE_MS;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let closedByCaller = false;
+  let pendingAudio: Blob[] = [];
 
   const eventHandlers = new Set<(event: ServerEvent) => void>();
   const stateHandlers = new Set<(state: ConnectionState) => void>();
@@ -70,6 +82,13 @@ export function connectInterviewSocket(
   function setState(next: ConnectionState) {
     state = next;
     for (const handler of stateHandlers) handler(next);
+  }
+
+  function flushPendingAudio() {
+    if (!pendingAudio.length) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    for (const chunk of pendingAudio) ws.send(chunk);
+    pendingAudio = [];
   }
 
   function rawSend(event: ClientEvent) {
@@ -104,6 +123,7 @@ export function connectInterviewSocket(
       if (event.type === "session.started") {
         sessionId = event.session_id;
         lastSeq = event.seq;
+        flushPendingAudio();
       } else {
         lastSeq = Math.max(lastSeq, event.seq);
       }
@@ -140,6 +160,15 @@ export function connectInterviewSocket(
     sendAudioChunk(chunk) {
       if (sessionId && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(chunk);
+        return;
+      }
+      // No session yet — hold the chunk rather than dropping it, so the
+      // container header in chunk #1 survives to reach the STT provider.
+      pendingAudio.push(chunk);
+      if (pendingAudio.length > MAX_PENDING_AUDIO_CHUNKS) {
+        // Drop from index 1, never index 0: the first chunk is the only one
+        // carrying the WebM header, so it must outlive any trimming.
+        pendingAudio.splice(1, 1);
       }
     },
     onEvent(handler) {

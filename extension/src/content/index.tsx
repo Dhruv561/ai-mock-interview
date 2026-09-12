@@ -4,6 +4,7 @@ import cssText from "../styles/globals.css?inline";
 import { App } from "./App";
 import { watchCode } from "./editor";
 import { cacheProblemInfo, hasActiveInterviewSession, resetInterviewSession } from "./interviewSession";
+import { stopAllMicrophoneCapture } from "../media/microphone";
 import { releasePageSpace, reservePageSpace } from "./layout";
 import { isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
 
@@ -11,6 +12,10 @@ const HOST_ID = "ai-mock-interview-root";
 const LOG_PREFIX = "[ai-mock-interview]";
 
 let stopWatchingCode: (() => void) | null = null;
+// Retained so unmount() can actually unmount React. Removing the host from
+// the DOM does NOT unmount a root or run component cleanup — that was the
+// root cause of the mic outliving the panel on SPA navigation (2026-09-13).
+let reactRoot: ReturnType<typeof createRoot> | null = null;
 
 function mount() {
   if (!isSupportedProblemPage() || document.getElementById(HOST_ID)) return;
@@ -30,7 +35,8 @@ function mount() {
   mountPoint.id = "app-root";
   shadow.appendChild(mountPoint);
 
-  createRoot(mountPoint).render(<App />);
+  reactRoot = createRoot(mountPoint);
+  reactRoot.render(<App />);
   reservePageSpace();
 
   const socket = getInterviewSocket();
@@ -65,10 +71,21 @@ function mount() {
 }
 
 function unmount() {
+  // Unmount React BEFORE removing the host, so component cleanup actually
+  // runs (this is what stops the microphone). Detaching the DOM node first
+  // leaves the root mounted against an orphaned container and silently
+  // skips every effect teardown.
+  reactRoot?.unmount();
+  reactRoot = null;
+
   document.getElementById(HOST_ID)?.remove();
   releasePageSpace();
   stopWatchingCode?.();
   stopWatchingCode = null;
+
+  // Belt and braces: even if a future change loses the React cleanup path,
+  // teardown must never leave the mic live. Cheap and idempotent.
+  stopAllMicrophoneCapture();
 }
 
 mount();
