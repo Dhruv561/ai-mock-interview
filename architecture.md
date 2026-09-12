@@ -437,6 +437,6 @@ Mapped 1:1 to PRD §14 scenarios and their implementation mechanism:
 
 ## 4. Open questions / risks to revisit
 
-- Monaco MAIN-world bridge (§D) is the single highest-risk integration point — if it proves unreliable against real LeetCode markup, the DOM-scraping fallback becomes primary and should be hardened first.
+- ~~Monaco MAIN-world bridge (§D) is the single highest-risk integration point~~ — **resolved 2026-09-12**: confirmed working live against 3 real problem pages (`window.monaco.editor.getEditors()` is populated, and `[data-track-load="code_editor"]` reliably disambiguates the real editor from other Monaco models on the page). Implemented in `extension/src/content/mainWorldBridge.ts` + `editor.ts`. Remaining residual risk is unchanged in kind (LeetCode could change this markup later) but no longer unvalidated.
 - In-memory session state (§G, §Q defaults) means the backend is single-process and session data does not survive a backend restart — fine for a hackathon demo, explicitly not production-ready, and should not be silently "fixed" by adding infrastructure before it's actually needed.
 - Hand-mirrored schemas (§ deviation table, §R) are a known drift risk, mitigated by the shared-fixture contract test, not eliminated by tooling.

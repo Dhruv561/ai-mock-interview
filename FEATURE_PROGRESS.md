@@ -176,53 +176,101 @@ None — feature complete. Proceed to Phase 2 (Feature 03/04).
 # Feature 03 — LeetCode problem detection
 
 ## Status
-PLANNED
+DONE
 
 ## Priority
 P0
 
+## started_at
+2026-09-12
+
+## Current task
+Complete.
+
 ## Acceptance criteria
-- [ ] detects supported problem pages
-- [ ] extracts title
-- [ ] extracts description
-- [ ] extracts difficulty
-- [ ] handles unsupported pages gracefully
+- [x] detects supported problem pages (`isSupportedProblemPage`/`getProblemSlug` in `content/leetcode.ts`, `/problems/<slug>` pattern)
+- [x] extracts title (split into number + title, e.g. "1. Two Sum" → `{number: "1", title: "Two Sum"}`)
+- [x] extracts description
+- [x] extracts difficulty (Easy/Medium/Hard)
+- [x] handles unsupported pages gracefully (`extractProblemInfo` returns `null` off-problem-page or if expected elements aren't rendered yet; `waitForProblemInfo` polls up to 5s for the SPA to finish rendering before giving up)
 
 ## Completed
-- None yet.
+- `content/leetcode.ts`: `isSupportedProblemPage`, `getProblemSlug`, `extractProblemInfo`, `waitForProblemInfo`.
+- Selectors were not guessed — confirmed live via `claude-in-chrome` browser inspection against real `leetcode.com/problems/two-sum` and `/merge-intervals` pages before writing any code: `.text-title-large` (title), `[class*="text-difficulty-"]` (difficulty), `[data-track-load="description_content"]` (description) — all three are semantic/stable-looking classes/attributes on LeetCode's current build, not hashed CSS-module names.
+- Wired into `content/index.tsx` at mount (logs the extracted `ProblemInfo`; not yet fed into the UI — see Feature 02 rationale below).
 
 ## Remaining
-- All implementation work.
+Nothing.
+
+## Files changed
+- `extension/src/content/leetcode.ts`, `extension/src/content/leetcode.test.ts`, `extension/src/content/index.tsx`, `extension/src/manifest.ts`
+
+## Tests/checks run
+- `npm run --workspace extension test` — new `leetcode.test.ts` (7 cases: slug/support detection, title/difficulty/description parsing on two different problems' markup, null on unsupported page, null when elements haven't rendered yet)
+- Manual, live Chrome (`claude-in-chrome`, connected this session) against 3 real problems — Two Sum (Easy), Merge Intervals (Medium), Add Two Numbers (Medium) — extraction confirmed correct on each via direct DOM/`window.monaco` inspection matching the shipped selectors exactly
+- `npm run --workspace extension typecheck` / `lint` / `build` — all pass
+
+## Verification
+VERIFIED and DONE. Selectors validated against real markup *before* writing extraction code (not guessed), then the shipped code's behavior cross-checked against 3 real problem pages.
+
+## Known issues/blockers
+None. Standard risk noted in architecture.md §D stands: if LeetCode changes these class names/attributes, extraction breaks — isolated in this one file so it's a contained fix.
 
 ## Next action
-Implement problem-page detection and a normalised problem model.
+None — feature complete.
 
 ---
 
 # Feature 04 — Live code extraction and change detection
 
 ## Status
-PLANNED
+IMPLEMENTED
 
 ## Priority
 P0
 
+## started_at
+2026-09-12
+
+## Current task
+Complete except for the one criterion that genuinely depends on Phase 3 (WebSocket transport doesn't exist yet — see below).
+
 ## Acceptance criteria
-- [ ] detects current language
-- [ ] extracts current code
-- [ ] detects meaningful code changes
-- [ ] debounces updates
-- [ ] sends typed code_update events
-- [ ] does not send an event for every keystroke
+- [x] detects current language (Monaco's own `languageId` via the MAIN-world bridge, e.g. "cpp"; DOM-scrape fallback maps the language-selector button label to the same style of id)
+- [x] extracts current code (bridge: `model.getValue()`; DOM fallback: reconstructs from `.view-line` nodes — documented as incomplete for long files since Monaco virtualizes off-screen lines, per architecture.md §D)
+- [x] detects meaningful code changes
+- [x] debounces updates (settle-based: 1s poll, only fires after 2.5s of no further change, plus a minimum-diff-size gate against the last *emitted* snapshot — architecture.md §L rule 3)
+- [ ] sends typed code_update events — **intentionally not yet**: there is no WebSocket client (Phase 3/Feature 06). `content/index.tsx` currently logs each meaningful change instead of sending it. This is a real, tracked gap, not an oversight — will be closed when Feature 06 lands by swapping the `console.debug` callback in `index.tsx` for `ws.send(...)`.
+- [x] does not send an event for every keystroke (verified — see below)
 
 ## Completed
-- None yet.
+- `content/mainWorldBridge.ts` — MAIN-world script (new manifest content_scripts entry with `world: "MAIN"`), resolves the *correct* Monaco editor among multiple models/editors on the page by checking which one's DOM node lives inside `[data-track-load="code_editor"]` (confirmed necessary and correct live — LeetCode's Two Sum page has 2 Monaco models, only one of them real).
+- `content/editor.ts` — isolated-world adapter: `requestFromBridge()` (postMessage request/response, 500ms timeout), `scrapeFromDom()` fallback, `getCurrentSnapshot()`, `watchCode()` (1s poll wired to the detector below).
+- `content/codeChangeDetector.ts` — pure, DOM-free debounce/diff state machine (`createCodeChangeDetector`), deliberately separated out so it's unit-testable without a browser.
+- Wired into `content/index.tsx`: `watchCode()` started on mount, stopped on unmount (interval leak would otherwise persist across SPA navigations).
 
 ## Remaining
-- All implementation work.
+- Nothing beyond the Phase-3-dependent criterion noted above.
+
+## Files changed
+- `extension/src/content/mainWorldBridge.ts`, `extension/src/content/editor.ts`, `extension/src/content/codeChangeDetector.ts`, `extension/src/content/codeChangeDetector.test.ts`, `extension/src/content/index.tsx`, `extension/src/manifest.ts`
+
+## Tests/checks run
+- `npm run --workspace extension test` — new `codeChangeDetector.test.ts` (6 cases: no emission while still changing, emits once settled, doesn't re-emit the same settled snapshot, skips below-threshold changes, emits again once a later change clears the threshold, language change counts as meaningful even with identical code)
+- Manual, live Chrome: confirmed the full bridge round-trip fires correctly end-to-end (isolated world → postMessage → MAIN world → real Monaco lookup → postMessage back → debounce gate → callback) — captured one live `console.debug` of a real "meaningful code change" event from the actual extension bundle, not a simulation
+- Manual, live Chrome: confirmed the SPA re-mount lifecycle is correct on a clean single content-script instance — removing the panel without a path change does *not* cause a spurious remount (guard works); navigating to a different problem *does* remount the panel (`document.getElementById('ai-mock-interview-root')` checked directly before/after each step)
+- `npm run --workspace extension typecheck` / `lint` / `build` — all pass; build output confirms `mainWorldBridge.ts` compiles to its own chunk and the generated `manifest.json` carries the `world: "MAIN"` content_scripts entry correctly
+
+## Verification
+IMPLEMENTED, not fully DONE — the one unchecked acceptance criterion (`sends typed code_update events`) genuinely requires Phase 3's WebSocket client, which doesn't exist yet; this is sequencing, not a defect. Everything else is verified both by unit test and live browser behavior.
+
+Testing note for future sessions: this session's `claude-in-chrome` console-log tool reliably captured messages originating from the page's own scripts and from `javascript_tool`-injected code, but only reliably caught *one* message originating from the extension's isolated-world content script across an extended test session (repeated polls afterward showed nothing new, despite the underlying mechanism clearly still running). Root cause not confirmed, but DOM-state inspection (checking `document.getElementById(...)` directly via `javascript_tool`) worked reliably as an alternative and is what most of this feature's live verification above relies on — prefer that approach over trusting repeated console captures from a content script in this environment.
+
+## Known issues/blockers
+None blocking. The `sends typed code_update events` item is tracked, not forgotten — will close automatically as part of Feature 06's WS client work.
 
 ## Next action
-Implement the editor adapter and debounced code observer.
+Leave as IMPLEMENTED until Feature 06 (WebSocket transport) exists; then wire `watchCode`'s callback in `index.tsx` to send a real `code.update` event, flip the last acceptance criterion, and move to VERIFIED/DONE.
 
 ---
 

@@ -24,6 +24,18 @@ export default defineManifest({
       js: ["src/content/index.tsx"],
       run_at: "document_idle",
     },
+    // Isolated-world content scripts cannot see window.monaco — it's a
+    // page-global set by LeetCode's own bundle. This second script runs in
+    // the page's MAIN world so it can read it, and talks to the isolated
+    // world (content/editor.ts) via window.postMessage. See architecture.md
+    // §D — confirmed live against real leetcode.com problem pages before
+    // implementing (window.monaco.editor.getEditors() is populated).
+    {
+      matches: ["https://leetcode.com/problems/*"],
+      js: ["src/content/mainWorldBridge.ts"],
+      world: "MAIN",
+      run_at: "document_start",
+    },
   ],
   permissions: ["scripting", "storage"],
   host_permissions: ["https://leetcode.com/*"],

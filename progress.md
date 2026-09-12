@@ -4,28 +4,31 @@ High-level project dashboard. Update after every meaningful work slice, per `CLA
 
 ---
 
-## Status: Phase 1 complete (Feature 01 + Feature 02 both DONE)
+## Status: Phase 2 implemented (Feature 03 DONE, Feature 04 IMPLEMENTED pending Phase 3)
 
 Last updated: 2026-09-12
 
 ## Current phase
 
-**Phase 1 — Repository scaffolding + extension visual shell. Complete.** Feature 01 and Feature 02 are both `DONE`, including real-browser manual verification against a live `leetcode.com` problem page. Ready to move into Phase 2 (LeetCode problem detection + live code extraction).
+**Phase 2 — LeetCode integration.** Feature 03 (problem detection) is `DONE`. Feature 04 (live code extraction + change detection) is `IMPLEMENTED` — everything works except sending the extracted data anywhere, since there's still no WebSocket client (that's Phase 3/Feature 06). Ready to move into Phase 3.
 
 ## Completed
 
 - **Planning (Phase 0):** `architecture.md`, `progress.md`, `TODO.md`, `README.md`, `.env.example` written from a from-scratch repository inspection; pushed to `origin/main`.
-- **Feature 01 — repository foundation (DONE):** npm workspace (`extension`, `shared`) + `uv`-managed `backend/`. Extension: Vite 8 + `@crxjs/vite-plugin` + React 19 + TS + Tailwind v4, MV3 manifest scoped to `leetcode.com/problems/*`, ESLint + Vitest/RTL configured. Backend: FastAPI + `/health` route, `pydantic-settings`-based config defaulting to mock providers, pytest + ruff configured. `shared/events.ts` establishes the Zod-schema pattern that will mirror `backend/app/interview/schemas.py` once Phase 3 defines the full event catalogue. `scripts/dev.sh` / `scripts/check.sh` both work; `scripts/check.sh` runs the full lint/typecheck/test/build sequence across both projects and passes end-to-end.
-- **Feature 02 — interview overlay UI (DONE):** full interactive mock interview panel — idle start screen → scripted dialogue → tiered hint requests → end & review scorecard. Built with a typed Context+reducer store (`extension/src/state/`), no external state library, so swapping the mock engine for the real WebSocket client later shouldn't touch the components. 9 unit tests passing.
-- **Post-review fixes (same day, after the user manually tested the build):** (1) panel was overlaying the LeetCode editor — fixed with `extension/src/content/layout.ts`, which reserves 420px on the viewport edge via `margin-right` on `<html>` so LeetCode's own layout reflows beside the panel; (2) live "RUBRIC SO FAR" section removed from the in-progress panel (rubric now only shown on the Review screen) — a deliberate deviation from PRD §3.3/FR13/`docs/ui-reference.png`, made as a product decision after asking the user to confirm it should override the spec; (3) confirmed the "not recording me, scripted dummy speech" observation is expected — Feature 02 is mock-only by design, real mic/STT is Phase 4. Both fixes verified live against a real `leetcode.com/problems/two-sum` page via `claude-in-chrome` browser automation (connected this session, unlike the previous one).
+- **Phase 1 (Feature 01 + 02, DONE):** npm workspace scaffolding (extension + backend + shared), and a fully interactive mocked interview panel UI. Post-review fixes: panel now reflows beside the LeetCode editor instead of overlaying it; live rubric hidden until the Review screen (deliberate PRD deviation, confirmed with the user). See git history for full detail — not re-summarized here.
+- **Phase 2 (Feature 03 + 04):**
+  - `content/leetcode.ts` — problem detection/extraction. Selectors (`.text-title-large`, `[class*="text-difficulty-"]`, `[data-track-load="description_content"]`, `[data-track-load="code_editor"]`) were confirmed live against real LeetCode markup via `claude-in-chrome` browser inspection *before* writing any extraction code — not guessed.
+  - `content/mainWorldBridge.ts` — new MV3 manifest content script running in the page's MAIN world (`world: "MAIN"`), the only way to reach `window.monaco` (isolated-world content scripts can't see it). Talks to the isolated world via `window.postMessage`. Disambiguates the real code editor among multiple Monaco models on the page by checking which one's DOM node lives inside `[data-track-load="code_editor"]`.
+  - `content/editor.ts` + `content/codeChangeDetector.ts` — bridge-first/DOM-scrape-fallback snapshot reading, and a pure, unit-tested debounce+diff-size gate (settle for 2.5s, then only emit if the change clears a minimum size against the last emission) so code changes are never sent on every keystroke.
+  - Verified live across 3 real problems (Two Sum/Easy, Merge Intervals/Medium, Add Two Numbers/Medium), plus the SPA re-mount lifecycle (MutationObserver-based) confirmed correct on a clean content-script instance.
 
 ## In progress
 
-Nothing — Phase 1 is complete.
+Nothing actively blocking. Feature 04's one remaining acceptance criterion (`sends typed code_update events`) is a real, tracked gap that closes automatically once Phase 3 adds the WebSocket client — not something to chase now.
 
 ## Next
 
-Phase 2 (Feature 03/04) — LeetCode problem detection + live code extraction, per `TODO.md`.
+Phase 3 (Feature 06) — real-time WebSocket transport: define the full typed event catalogue in `backend/app/interview/schemas.py` + `shared/events.ts`, implement the backend WS endpoint and session registry, implement `extension/src/networking/websocket.ts` (connect/reconnect/seq tracking), and wire `content/index.tsx`'s `watchCode`/`waitForProblemInfo` callbacks to actually send `code.update`/`session.start` events instead of `console.debug`. Per `TODO.md`.
 
 See `TODO.md` for the full granular breakdown and `FEATURE_PROGRESS.md` for the authoritative per-feature checkpoint records.
 
@@ -33,6 +36,7 @@ See `TODO.md` for the full granular breakdown and `FEATURE_PROGRESS.md` for the 
 
 - `npm install` at the workspace root requires `--legacy-peer-deps` — a known npm/arborist resolver crash (`Cannot read properties of null (reading 'edgesOut')`) triggered by vitest's optional browser-mode peer packages, unrelated to any version choice made here. Anyone re-running install from a clean checkout needs the same flag; called out in `README.md` and `FEATURE_PROGRESS.md` Feature 01.
 - No external API keys configured — not needed until Phase 4 (STT) / Phase 6 (LLM) / Phase 7 (TTS); mock providers cover the happy path until then (`architecture.md` §S).
+- This session's browser console-log tool didn't reliably capture repeated content-script-origin messages (see `FEATURE_PROGRESS.md` Feature 04's Verification note) — not a product issue, but worth knowing before relying on it for the next phase's live testing; direct DOM-state inspection via the JS-exec tool was the reliable fallback.
 
 ## Decisions log (Phase 1 additions)
 
@@ -66,8 +70,8 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 |---|---|---|---|
 | 01 | Repository and project foundation | DONE | P0 |
 | 02 | Interview overlay UI (mocked data) | DONE | P0 |
-| 03 | LeetCode problem detection | PLANNED | P0 |
-| 04 | Live code extraction and change detection | PLANNED | P0 |
+| 03 | LeetCode problem detection | DONE | P0 |
+| 04 | Live code extraction and change detection | IMPLEMENTED | P0 |
 | 05 | Microphone and speech-to-text | PLANNED | P0 |
 | 06 | Interview WebSocket session | PLANNED | P0 |
 | 07 | Interview state machine | PLANNED | P0 |
