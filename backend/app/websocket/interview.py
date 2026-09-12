@@ -1,12 +1,14 @@
-"""WebSocket session transport (Feature 06 — architecture.md §G) plus the
-STT audio relay (Feature 05 — architecture.md §E/§H).
+"""WebSocket session transport (Feature 06 — architecture.md §G), the STT
+audio relay (Feature 05 — architecture.md §E/§H), and the interview state
+machine wiring (Feature 07 — architecture.md §I).
 
 Owns connection lifecycle, event validation, the resume/replay protocol,
-and forwarding binary mic-audio frames to a per-session STT provider. It
-does not run the interview state machine, call the LLM, or compute the
-rubric — those are Features 07/08/13, layered on top of this transport
-later. Client JSON events other than session.start/resume are validated
-and timestamped but otherwise inert until that logic exists.
+forwarding binary mic-audio frames to a per-session STT provider, and
+keeping each session's InterviewState up to date as events arrive. It
+does not call the LLM or compute the rubric — those are Features 08/13,
+layered on top of this transport later. hint.requested/screen.recording.*
+are validated and keep the session alive but don't yet drive any
+interviewer behaviour (that's the controller, Feature 08/§L).
 """
 
 from __future__ import annotations
@@ -24,8 +26,11 @@ from starlette.websockets import WebSocketState
 from app.config import get_settings
 from app.interview.schemas import (
     CLIENT_EVENT_ADAPTER,
+    CodeUpdateEvent,
     DevSimulateTranscriptEvent,
     ErrorEvent,
+    HintRequestedEvent,
+    InterviewerStateEvent,
     ProblemInfo,
     SessionEndEvent,
     SessionResumeEvent,
@@ -34,6 +39,7 @@ from app.interview.schemas import (
     TranscriptFinalEvent,
     TranscriptPartialEvent,
 )
+from app.interview.state import InterviewState, TranscriptEntry
 from app.providers.stt import get_stt_provider
 from app.providers.stt.base import STTSession
 
@@ -49,8 +55,7 @@ RING_BUFFER_SIZE = 200
 @dataclass
 class SessionRecord:
     session_id: str
-    problem: ProblemInfo
-    language: str
+    state: InterviewState
     seq: int = 0
     events: deque[dict] = field(default_factory=lambda: deque(maxlen=RING_BUFFER_SIZE))
     last_seen: float = field(default_factory=time.monotonic)
@@ -77,7 +82,8 @@ class SessionRegistry:
 
     def create(self, problem: ProblemInfo, language: str) -> SessionRecord:
         session_id = str(uuid.uuid4())
-        record = SessionRecord(session_id=session_id, problem=problem, language=language)
+        state = InterviewState(problem=problem, language=language)
+        record = SessionRecord(session_id=session_id, state=state)
         self._sessions[session_id] = record
         return record
 
@@ -132,7 +138,10 @@ def _make_transcript_callbacks(session_id: str):
         record = sessions.get(session_id)
         if record is None:
             return
-        event = TranscriptFinalEvent(seq=0, text=text, timestamp=time.time())
+        timestamp = time.time()
+        entry = TranscriptEntry(speaker="candidate", text=text, timestamp=timestamp)
+        record.state.transcript.append(entry)
+        event = TranscriptFinalEvent(seq=0, text=text, timestamp=timestamp)
         await _emit(record, event.model_dump())
 
     return on_partial, on_final
@@ -198,6 +207,8 @@ async def interview_socket(ws: WebSocket) -> None:
                     record.stt_session = None
                 started = SessionStartedEvent(seq=0, session_id=record.session_id)
                 await _emit(record, started.model_dump())
+                stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
+                await _emit(record, stage_event.model_dump())
                 continue
 
             if isinstance(client_event, SessionResumeEvent):
@@ -226,17 +237,43 @@ async def interview_socket(ws: WebSocket) -> None:
                     continue
                 partial = TranscriptPartialEvent(seq=0, text=client_event.text)
                 await _emit(record, partial.model_dump())
-                final = TranscriptFinalEvent(seq=0, text=client_event.text, timestamp=time.time())
+                timestamp = time.time()
+                text = client_event.text
+                record.state.transcript.append(
+                    TranscriptEntry(speaker="candidate", text=text, timestamp=timestamp)
+                )
+                final = TranscriptFinalEvent(seq=0, text=client_event.text, timestamp=timestamp)
                 await _emit(record, final.model_dump())
                 continue
 
-            if isinstance(client_event, SessionEndEvent) and record.stt_session is not None:
-                await record.stt_session.close()
-                record.stt_session = None
+            if isinstance(client_event, CodeUpdateEvent):
+                record.state.current_code = client_event.code
+                record.state.language = client_event.language
+                record.last_seen = time.monotonic()
+                continue
 
-            # code.update, hint.requested, screen.recording.*, session.pause:
-            # accepted and keep the session alive, but no interview-domain
-            # logic exists yet to act on them (Features 07/08/11/13/14).
+            if isinstance(client_event, HintRequestedEvent):
+                # Uncapped here deliberately — refusing hints beyond level 3
+                # is the controller's job (architecture.md §L rule 6), not
+                # built yet (Feature 08). This just keeps the count correct.
+                record.state.hint_level += 1
+                record.last_seen = time.monotonic()
+                continue
+
+            if isinstance(client_event, SessionEndEvent):
+                if record.stt_session is not None:
+                    await record.stt_session.close()
+                    record.stt_session = None
+                if record.state.stage != "review":
+                    record.state.transition_to("review")
+                    stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
+                    await _emit(record, stage_event.model_dump())
+                record.last_seen = time.monotonic()
+                continue
+
+            # screen.recording.*, session.pause: accepted and keep the
+            # session alive, but no interview-domain logic exists yet to
+            # act on them (Features 08/12).
             record.last_seen = time.monotonic()
 
     except WebSocketDisconnect:

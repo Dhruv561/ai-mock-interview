@@ -1,5 +1,6 @@
 import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
 import { getInterviewSocket } from "../networking/interviewSocket";
+import { useInterviewStage } from "../networking/useInterviewStage";
 import { useInterview } from "../state/interviewStore";
 import {
   buildMockReview,
@@ -10,6 +11,7 @@ import { EndReviewButton } from "./EndReviewButton";
 import { HintButton } from "./HintButton";
 import { MicBadge } from "./MicBadge";
 import { Review } from "./Review";
+import { StageBadge } from "./StageBadge";
 import { StartScreen } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
 import { Transcript } from "./Transcript";
@@ -21,14 +23,16 @@ const MAX_HINT_LEVEL = 3;
  * mocked data, no backend). A later phase replaces the mock engine's
  * dispatch calls with translated server events over the real WebSocket
  * (networking/websocket.ts) without changing this component or the
- * reducer/types beneath it. Mic capture (Feature 05) is real and wired
- * directly to Start/End here, independent of the mock engine — same
- * pattern as the connection badge in App.tsx.
+ * reducer/types beneath it. Mic capture (Feature 05) and the interview
+ * stage (Feature 07) are both real and wired directly here, independent
+ * of the mock engine — same pattern as the connection badge in App.tsx.
  */
 export function InterviewPanel() {
   const { state, dispatch } = useInterview();
   useMockInterviewEngine(state.status, dispatch);
-  const mic = useMicrophoneCapture(getInterviewSocket());
+  const socket = getInterviewSocket();
+  const mic = useMicrophoneCapture(socket);
+  const stage = useInterviewStage(socket);
 
   function handleStart() {
     dispatch({ type: "session/start" });
@@ -74,6 +78,7 @@ export function InterviewPanel() {
            * See architecture.md §1 and progress.md decisions log.
            */}
           <MicBadge status={mic.status} />
+          <StageBadge stage={stage} />
           <Transcript messages={state.messages} />
           <div className="flex gap-2 px-5 py-4">
             <HintButton

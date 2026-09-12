@@ -62,9 +62,9 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 5 — Interview state machine (Feature 07)
 
-- [ ] `backend/app/interview/state.py`: `InterviewState` model, stage enum, transition table
-- [ ] Unit tests: every legal transition succeeds, every illegal one rejected
-- [ ] Wire `interviewer.state` events to the UI's `StatusIndicator`
+- [x] `backend/app/interview/state.py`: `InterviewState` model, stage enum, transition table
+- [x] Unit tests: every legal transition succeeds, every illegal one rejected
+- [x] Wire `interviewer.state` events to the UI — as a new `StageBadge` next to `StatusIndicator`, not a rewrite of it (that component stays mock-engine-driven until Feature 08 replaces the mock engine itself)
 
 ## Phase 6 — AI interviewer + controller (Feature 08)
 

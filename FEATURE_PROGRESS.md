@@ -404,27 +404,52 @@ Optional live check described above, then flip to `DONE`. Otherwise: proceed to 
 # Feature 07 — Interview state machine
 
 ## Status
-PLANNED
+VERIFIED
 
 ## Priority
 P0
 
+## started_at
+2026-09-13
+
+## Current task
+Complete except one acceptance criterion that genuinely depends on Feature 08 (see below) — sequencing, not an oversight.
+
 ## Acceptance criteria
-- [ ] explicit interview stages exist
-- [ ] valid transitions are defined
-- [ ] invalid transitions are handled
-- [ ] session state persists across events
-- [ ] UI receives current stage
-- [ ] controller can trigger interviewer actions
+- [x] explicit interview stages exist — `InterviewStage` literal (already defined in `schemas.py` for the event catalogue), `InterviewState.stage`
+- [x] valid transitions are defined — `_TRANSITIONS` table in `state.py`: `intro → clarification → approach → coding`, then coding/complexity/testing/optimisation form a revisitable loop, and `review` (terminal) is additionally reachable from *every* stage — a deliberate interpretation beyond §I's literal arrow diagram, since a candidate can end the interview early from any point and `session.end` must always be able to land on it (documented in `state.py`'s comment)
+- [x] invalid transitions are handled — `IllegalTransitionError`, rejected transition leaves `.stage` unchanged
+- [x] session state persists across events — `code.update` writes `current_code`/`language`, `hint.requested` increments `hint_level`, candidate speech (both `dev.simulate_transcript` and real STT `on_final`) appends to `transcript` — all on the same `InterviewState` instance for the life of the session, survives reconnects (it lives on `SessionRecord`, not the connection)
+- [x] UI receives current stage — `interviewer.state` sent right after `session.started` (stage=`intro`), and again on `session.end` (stage=`review`); consumed by a new `useInterviewStage` hook + `StageBadge` component, independent of the mock engine
+- [ ] controller can trigger interviewer actions — **blocked on Feature 08**: there is no LLM/controller yet to propose an action, so nothing can trigger one. This criterion's own architecture.md §L specifies the controller "folded into Features 07/08" — it was never realistically Feature 07's alone to satisfy. Documented here rather than stubbed out with a fake controller just to check the box.
 
 ## Completed
-- None yet.
+- `backend/app/interview/state.py` — `InterviewState` (Pydantic, pure — no I/O), `TranscriptEntry`, `IllegalTransitionError`, the transition table and `can_transition_to`/`transition_to`. All fields from CLAUDE.md's "treat interview state as the core domain object" list are present (`problem`, `language`, `stage`, `current_code`, `transcript`, `rubric`, `hint_level`, `recent_interviewer_actions`, `code_analysis_observations`) — the last four stay at empty/zero defaults until the features that populate them land (13, 09, 08 respectively), which is expected, not a gap in this feature.
+- `backend/app/websocket/interview.py` — `SessionRecord.problem`/`.language` replaced by a single `state: InterviewState` (removes duplication); `session.start` now emits `interviewer.state` right after `session.started`; `code.update` and `hint.requested` got their own explicit handling (previously both fell into the generic "accepted but inert" bucket) that writes into `record.state`; both transcript-producing paths (`dev.simulate_transcript`, the STT `on_final` callback) append a `TranscriptEntry`; `session.end` transitions to `review` (idempotently — a second `session.end` doesn't re-transition or crash) and announces it.
+- Extension: `networking/useInterviewStage.ts` (subscribes to `interviewer.state` over the existing socket) + `components/StageBadge.tsx`, wired into `InterviewPanel.tsx` next to `MicBadge`.
 
 ## Remaining
-- All implementation work.
+- The "controller can trigger interviewer actions" criterion — genuinely Feature 08's job, tracked there.
+
+## Files changed
+- `backend/app/interview/state.py`, `backend/app/websocket/interview.py`, `backend/tests/{test_interview_state,test_websocket_interview}.py`
+- `extension/src/networking/{useInterviewStage,useInterviewStage.test}.ts`, `extension/src/components/{StageBadge,InterviewPanel}.tsx`
+- `TODO.md`
+
+## Tests/checks run
+- `uv run ruff check .` / `uv run pytest -q` (backend) — 92/92 pass. `test_interview_state.py`: every (current, target) pair across all 8 stages checked against the table (64 parametrized cases) plus terminal/reachability/defaults checks (67 total). `test_websocket_interview.py` gained: session.start emits `interviewer.state` right after `session.started`; `code.update`/`hint.requested` persist into `record.state`; `session.end` transitions to `review` and is idempotent; existing tests updated to account for the new `interviewer.state` event now following every `session.started`, and the resume/replay test fixed to use the *actual* last-seen seq (was silently relying on `session.started`'s seq alone, which broke once a second event started following it)
+- `npm run --workspace extension test` — 47/47 pass, incl. new `useInterviewStage.test.ts` (starts null, updates on `interviewer.state`, ignores other event types)
+- `npm run --workspace extension typecheck` / `lint` / `build` — all pass
+- Manual, live Chrome (`claude-in-chrome`, this session) against `leetcode.com/problems/add-two-numbers/description/` with a freshly reloaded extension build: Start → mic badge now reads "MIC ON" (permission was already granted from a prior session's manual test, so this is a real, not merely pending, capture) → End & review renders cleanly, no console errors either way. `StageBadge` correctly renders nothing (stage stays null — no `interviewer.state` ever arrives, since the backend is unreachable from this session's browser, the same tooling constraint as Features 05/06).
+
+## Verification
+VERIFIED, not DONE — held back solely by the one criterion that depends on Feature 08, not by anything unverified in what this feature actually built. The state machine itself has exhaustive automated coverage (every legal and illegal transition), and the WS-layer wiring is verified via genuine ASGI-level integration tests, same rigor as Features 05/06.
+
+## Known issues/blockers
+None new. Same live-backend-reachability caveat as Features 05/06 applies to seeing a live `interviewer.state` event in the browser, but doesn't affect this feature's actual verification (covered by the WS integration tests instead).
 
 ## Next action
-Implement the state model and deterministic transition logic.
+Proceed to Phase 6 (Feature 08 — AI interviewer + controller), which is what will both consume `InterviewState` to propose real interviewer actions and close this feature's one remaining criterion.
 
 ---
 

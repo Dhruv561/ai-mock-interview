@@ -14,13 +14,18 @@ PROBLEM = {
 }
 
 
-def test_session_start_returns_session_started():
+def test_session_start_returns_session_started_then_interviewer_state():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
         event = ws.receive_json()
         assert event["type"] == "session.started"
         assert isinstance(event["session_id"], str) and event["session_id"]
         assert event["seq"] == 1
+
+        stage_event = ws.receive_json()
+        assert stage_event["type"] == "interviewer.state"
+        assert stage_event["stage"] == "intro"
+        assert stage_event["seq"] == 2
 
 
 def test_malformed_json_is_rejected_without_closing_the_connection():
@@ -35,6 +40,7 @@ def test_malformed_json_is_rejected_without_closing_the_connection():
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
         event = ws.receive_json()
         assert event["type"] == "session.started"
+        ws.receive_json()  # interviewer.state
 
 
 def test_unknown_event_type_is_rejected():
@@ -79,9 +85,11 @@ def test_resume_does_not_replay_already_seen_events():
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
         started = ws.receive_json()
         session_id = started["session_id"]
+        stage_event = ws.receive_json()  # interviewer.state — the actual last seq seen
 
     with client.websocket_connect("/ws/interview") as ws2:
-        resume = {"type": "session.resume", "session_id": session_id, "last_seq": started["seq"]}
+        last_seq = stage_event["seq"]
+        resume = {"type": "session.resume", "session_id": session_id, "last_seq": last_seq}
         ws2.send_json(resume)
         # nothing new to replay — the next thing on the wire is a live response
         ws2.send_json({"type": "hint.requested"})
@@ -111,6 +119,7 @@ def test_audio_chunks_reach_the_mock_stt_session():
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
         started = ws.receive_json()
         session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state
 
         ws.send_bytes(b"fake-opus-bytes-1")
         ws.send_bytes(b"fake-opus-bytes-2")
@@ -124,7 +133,9 @@ def test_audio_chunks_reach_the_mock_stt_session():
 def test_dev_simulate_transcript_produces_partial_then_final():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
-        ws.receive_json()  # session.started
+        started = ws.receive_json()  # session.started
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state
 
         ws.send_json({"type": "dev.simulate_transcript", "text": "I'd use a hash map here."})
 
@@ -137,6 +148,12 @@ def test_dev_simulate_transcript_produces_partial_then_final():
         assert final["text"] == "I'd use a hash map here."
         assert isinstance(final["timestamp"], float)
 
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert len(record.state.transcript) == 1
+    assert record.state.transcript[0].speaker == "candidate"
+    assert record.state.transcript[0].text == "I'd use a hash map here."
+
 
 def test_dev_simulate_transcript_rejected_when_mock_providers_disabled(monkeypatch):
     real_settings = ws_module.get_settings()
@@ -146,6 +163,7 @@ def test_dev_simulate_transcript_rejected_when_mock_providers_disabled(monkeypat
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
         ws.receive_json()  # session.started
+        ws.receive_json()  # interviewer.state
 
         ws.send_json({"type": "dev.simulate_transcript", "text": "hello"})
         error = ws.receive_json()
@@ -164,6 +182,7 @@ def test_stt_provider_start_failure_degrades_gracefully(monkeypatch):
         started = ws.receive_json()
         # session still starts even though the STT provider couldn't connect
         assert started["type"] == "session.started"
+        ws.receive_json()  # interviewer.state
 
         # audio can still be sent — it's just silently dropped, not fatal
         ws.send_bytes(b"some-audio")
@@ -172,3 +191,46 @@ def test_stt_provider_start_failure_degrades_gracefully(monkeypatch):
         ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
         error = ws.receive_json()
         assert error["code"] == "session_not_found"
+
+
+def test_code_update_and_hint_requested_persist_into_session_state():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state
+
+        ws.send_json(
+            {"type": "code.update", "language": "cpp", "code": "int main() {}", "timestamp": 1.0}
+        )
+        ws.send_json({"type": "hint.requested"})
+        ws.send_json({"type": "hint.requested"})
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.state.current_code == "int main() {}"
+    assert record.state.language == "cpp"
+    assert record.state.hint_level == 2
+
+
+def test_session_end_transitions_to_review_and_is_idempotent():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json({"type": "session.end"})
+        stage_event = ws.receive_json()
+        assert stage_event["type"] == "interviewer.state"
+        assert stage_event["stage"] == "review"
+
+        # a second session.end must not crash or emit a duplicate transition
+        ws.send_json({"type": "session.end"})
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        error = ws.receive_json()
+        assert error["code"] == "session_not_found"
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.state.stage == "review"
