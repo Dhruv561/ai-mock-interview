@@ -4,13 +4,15 @@ High-level project dashboard. Update after every meaningful work slice, per `CLA
 
 ---
 
-## Status: Phase 5 done (Feature 07 VERIFIED — one criterion blocked on Feature 08)
+## Status: Phase 6 done (Feature 08 VERIFIED, Feature 07 now DONE)
 
 Last updated: 2026-09-13
 
 ## Current phase
 
-**Phase 5 — Interview state machine, complete.** Feature 07 is `VERIFIED`: `InterviewState` (architecture.md §I) with an exhaustively-tested transition table, wired into the WS layer so `code.update`/`hint.requested`/candidate speech now write into real per-session state instead of falling into the old "accepted but inert" bucket, and `interviewer.state` events reach the UI via a new `StageBadge`. One of the six acceptance criteria ("controller can trigger interviewer actions") is intentionally unchecked — it requires Feature 08's LLM/controller to exist at all, which architecture.md §L itself says is "folded into Features 07/08," not Feature 07's alone. Next: Phase 6 (Feature 08 — AI interviewer + controller), which both closes that criterion and is what will finally replace the mock engine driving the visible transcript panel — real speech still doesn't appear there yet because nothing consumes `transcript.partial`/`final`/`interviewer.state` into the UI's transcript until then.
+**Phase 6 — AI interviewer + controller, complete.** Feature 08 is `VERIFIED`: an LLM provider interface (mock + Anthropic, same mock-by-default pattern as STT), an interviewer agent that condenses `InterviewState` into versioned prompts, and `interview/controller.py` enforcing architecture.md §L's deterministic gating rules (cooldown, candidate-speaking gate, duplicate-question rejection, hint cap, legal-transitions-only). Wired into the WS session so `code.update`/transcript-final/`hint.requested` now genuinely trigger the interviewer — verified end-to-end through the mock provider via real ASGI-level WebSocket tests. This closes Feature 07's last acceptance criterion, so that feature is now `DONE`.
+
+**Scope note, corrected from what "Next" said last time:** the extension's transcript panel is *still* driven entirely by the Feature 02 mock engine — real interviewer/candidate events now genuinely flow from the backend, but nothing in the extension consumes them into the visible UI yet. TODO.md's actual Phase 6 checklist never included that wiring (it's backend-only); the "Next" note below previously implied it would happen here, which was inaccurate — corrected now rather than left standing. Doing that UI wiring is a reasonable next step but needs an explicit go-ahead, not an assumption.
 
 ## Completed
 
@@ -39,21 +41,29 @@ Last updated: 2026-09-13
   - `backend/app/websocket/interview.py` — `SessionRecord.problem`/`.language` collapsed into one `state: InterviewState`; `code.update`/`hint.requested`/candidate speech (`dev.simulate_transcript` and real STT) now write into it instead of being inert; `interviewer.state` sent on session start (stage=intro) and session end (stage=review, idempotently).
   - `extension/src/networking/useInterviewStage.ts` + `components/StageBadge.tsx` — consume `interviewer.state` and show it in the live panel, independent of the mock engine.
   - Live check: mic permission from Feature 05's earlier test session was still granted, so this session's live click-through showed genuine "MIC ON" capture, not just a pending prompt.
+- **Phase 6 (Feature 08):**
+  - `backend/app/interview/actions.py` — `InterviewerAction`, the single typed structure every provider must return (forced via tool-use for the real provider, never free-text parsing).
+  - `backend/app/interview/prompts.py` — versioned (`PROMPT_VERSION`), stage-specific system/user prompt builders; the user prompt's first two lines are a documented `Stage:`/`Trigger:` marker contract the mock provider relies on.
+  - `backend/app/providers/llm/{base,mock,anthropic}.py` — same mock-by-default pattern as STT; `MockLLMProvider` gives deterministic per-stage canned responses so the whole pipeline is testable without a key; `AnthropicLLMProvider` forces structured tool-use output, implemented but unverified live (no key).
+  - `backend/app/agents/interviewer.py` — thin: condenses state into prompts, asks the provider, returns the proposal.
+  - `backend/app/interview/controller.py` — `InterviewController`, the deterministic gate (§L rules 1,2,4,5,6). Rule 3 (debounce code-triggered calls) deliberately *not* re-implemented server-side — the client already debounces every `code.update` before sending it (Feature 04), so duplicating that logic server-side would just be redundant; the cooldown rule already caps how often the interviewer actually speaks regardless.
+  - `backend/app/websocket/interview.py` — new `_maybe_speak()` wired into `code.update`, transcript-final (both mock and real STT paths), and `hint.requested`. Refined Feature 07's hint handling: `hint_level` now only increments when a `give_hint` proposal is actually *accepted*, not unconditionally on every request — the cap has real enforcement to sit behind now.
+  - This closes Feature 07's last acceptance criterion ("controller can trigger interviewer actions") — that feature is now `DONE`.
 
 ## In progress
 
-Nothing actively blocking. Three features (05, 06, 07) share one optional follow-up: a genuine browser↔live-backend round trip couldn't be exercised this session because the automated Chrome instance couldn't reach this session's `localhost:8000` at all (network-isolation between the two, not a code issue — see `architecture.md` §4). Feature 05 additionally needs a real `DEEPGRAM_API_KEY` to test the non-mock STT path (mic permission itself is no longer a gap — see above). Worth doing together next session: run the backend, open a LeetCode problem, confirm the header badge reaches "BACKEND CONNECTED" and the stage badge shows a real stage, and either speak (with a real key) or use `dev.simulate_transcript` to see a transcript arrive.
+Nothing actively blocking. Four features (05, 06, 07, 08) share one optional follow-up: a genuine browser↔live-backend round trip couldn't be exercised this session because the automated Chrome instance couldn't reach this session's `localhost:8000` at all (network-isolation between the two, not a code issue — see `architecture.md` §4). Feature 05 additionally needs a real `DEEPGRAM_API_KEY`, and Feature 08 a real `ANTHROPIC_API_KEY`, to test their non-mock paths (mic permission itself is no longer a gap). Worth doing together next session: run the backend, open a LeetCode problem, confirm the header badge reaches "BACKEND CONNECTED" and the stage badge shows a real stage, and exercise `dev.simulate_transcript`/real speech to see a transcript and an interviewer reply arrive.
 
 ## Next
 
-Phase 6 (Feature 08) — AI interviewer + controller: LLM provider interface (mock + Anthropic) in `backend/app/providers/llm/`, `agents/interviewer.py` producing structured actions from `InterviewState`, and `interview/controller.py` enforcing the deterministic gating rules from architecture.md §L (never interrupt candidate speech, cooldown between utterances, debounce code-triggered LLM calls, reject near-duplicate questions, only apply legal stage transitions, cap hints at level 3). This is also what will finally wire real transcript/interviewer events into the visible UI, replacing the mock engine. Per `TODO.md`.
+Phase 7 (Feature 10) — ElevenLabs TTS: server-side ElevenLabs integration, streaming synthesized audio back over the WS connection for `interviewer.transcript`/`hint.response` text, candidate mute control. Per `TODO.md`. (Separately, not yet scoped: wiring the extension's transcript panel to the real `interviewer.transcript`/`hint.response`/candidate-transcript events that now flow from the backend — currently still only the Feature 02 mock engine drives what's visible.)
 
 See `TODO.md` for the full granular breakdown and `FEATURE_PROGRESS.md` for the authoritative per-feature checkpoint records.
 
 ## Known issues / blockers
 
 - `npm install` at the workspace root requires `--legacy-peer-deps` — a known npm/arborist resolver crash (`Cannot read properties of null (reading 'edgesOut')`) triggered by vitest's optional browser-mode peer packages, unrelated to any version choice made here. Anyone re-running install from a clean checkout needs the same flag; called out in `README.md` and `FEATURE_PROGRESS.md` Feature 01.
-- No external API keys configured — not needed until Phase 6 (LLM) / Phase 7 (TTS); STT (Deepgram) is now implemented behind the provider interface but also unverified without a key — mock providers cover the happy path until then (`architecture.md` §S).
+- No external API keys configured — not needed until Phase 7 (TTS); STT (Deepgram) and the interviewer LLM (Anthropic) are now both implemented behind their provider interfaces but unverified without real keys — mock providers cover the happy path until then (`architecture.md` §S).
 - This session's browser console-log tool didn't reliably capture repeated content-script-origin messages (see `FEATURE_PROGRESS.md` Feature 04's Verification note) — not a product issue, but worth knowing before relying on it for the next phase's live testing; direct DOM-state inspection via the JS-exec tool was the reliable fallback.
 - This session's `claude-in-chrome` automated browser could not reach `localhost:8000`/`127.0.0.1:8000` at all (a plain `fetch` timed out) even while this session's own shell could `curl` the same backend successfully — the two are on different hosts/network namespaces. Blocks a true live browser↔backend round trip for WS-dependent features (06 onward) from this tool; see `architecture.md` §4 and `FEATURE_PROGRESS.md` Feature 06 for the workaround (automated ASGI-level backend tests + simulated-socket extension tests) and the one manual check still worth doing on a machine where both share a network.
 
@@ -104,6 +114,15 @@ See `TODO.md` for the full granular breakdown and `FEATURE_PROGRESS.md` for the 
 | 2026-09-13 | `hint_level` increments uncapped on every `hint.requested`; the level-3 refusal rule from §L rule 6 is deliberately not enforced here | That's the controller's job (Feature 08), not the state machine's — Feature 07 keeps the count correct, Feature 08 decides what to do with it |
 | 2026-09-13 | "controller can trigger interviewer actions" left unchecked in Feature 07 rather than stubbed with a placeholder controller | architecture.md §L itself scopes the controller as "folded into Features 07/08" — building a fake one now just to satisfy the checkbox would be scope creep in the wrong direction |
 
+## Decisions log (Phase 6 additions)
+
+| Date | Decision | Why |
+|---|---|---|
+| 2026-09-13 | `hint_level` now increments only inside `InterviewController.accept_proposal` when a `give_hint` action is actually accepted, superseding Feature 07's "increment unconditionally on hint.requested" | The cap (§L rule 6) needed a single source of truth to enforce against, and an LLM could in principle propose `give_hint` from a different trigger too, not only an explicit request |
+| 2026-09-13 | §L rule 3 (debounce code-triggered LLM calls) is not re-implemented server-side | The client already debounces every `code.update` before sending it (Feature 04's `codeChangeDetector.ts`) — duplicating that logic server-side would re-solve an already-solved problem; the cooldown rule (rule 2) already caps how often the interviewer actually speaks regardless of update frequency |
+| 2026-09-13 | `LLMProvider.propose_action` takes pre-built prompt strings, not `InterviewState` directly; prompt construction lives in `agents/interviewer.py` + `interview/prompts.py`, not in the provider | Keeps the provider layer a reusable, interview-agnostic "text in, structured action out" transport, matching how `providers/stt` was kept close to raw audio bytes rather than full interview semantics |
+| 2026-09-13 | Extension transcript panel intentionally left wired to the mock engine only, not to the new real `interviewer.transcript`/`hint.response` events | TODO.md's actual Phase 6 scope was backend-only; wiring the UI wasn't asked for, so it wasn't assumed — flagged as an available next step instead (see `FEATURE_PROGRESS.md` Feature 08) |
+
 ## Milestone table
 
 Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and checkpoint detail.
@@ -116,8 +135,8 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 | 04 | Live code extraction and change detection | DONE | P0 |
 | 05 | Microphone and speech-to-text | VERIFIED | P0 |
 | 06 | Interview WebSocket session | VERIFIED | P0 |
-| 07 | Interview state machine | VERIFIED | P0 |
-| 08 | AI interviewer | PLANNED | P0 |
+| 07 | Interview state machine | DONE | P0 |
+| 08 | AI interviewer | VERIFIED | P0 |
 | 09 | Code analysis | PLANNED | P1 |
 | 10 | ElevenLabs interviewer voice | PLANNED | P0 |
 | 11 | Tiered hints | PLANNED | P1 |

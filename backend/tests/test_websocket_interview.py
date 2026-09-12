@@ -91,10 +91,11 @@ def test_resume_does_not_replay_already_seen_events():
         last_seq = stage_event["seq"]
         resume = {"type": "session.resume", "session_id": session_id, "last_seq": last_seq}
         ws2.send_json(resume)
-        # nothing new to replay — the next thing on the wire is a live response
-        ws2.send_json({"type": "hint.requested"})
-        # hint.requested has no server response yet, so send something that
-        # does to prove no stale replay was queued ahead of it.
+        # nothing new to replay — the next thing on the wire is a live response.
+        # screen.recording.started has no server response (unlike hint.requested,
+        # which now triggers the interviewer agent as of Feature 08), so it's
+        # safe filler that proves no stale replay was queued ahead of it.
+        ws2.send_json({"type": "screen.recording.started"})
         ws2.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
         error = ws2.receive_json()
         assert error["code"] == "session_not_found"
@@ -148,9 +149,19 @@ def test_dev_simulate_transcript_produces_partial_then_final():
         assert final["text"] == "I'd use a hash map here."
         assert isinstance(final["timestamp"], float)
 
+        # the mock interviewer responds to the transcript_final trigger at
+        # the default "intro" stage (Feature 08) — a real, not simulated,
+        # end-to-end pass through agent + controller
+        interviewer_reply = ws.receive_json()
+        assert interviewer_reply["type"] == "interviewer.transcript"
+        assert interviewer_reply["text"]
+
     record = ws_module.sessions.get(session_id)
     assert record is not None
-    assert len(record.state.transcript) == 1
+    assert len(record.state.transcript) == 2
+    assert record.state.transcript[0].speaker == "candidate"
+    assert record.state.transcript[0].text == "I'd use a hash map here."
+    assert record.state.transcript[1].speaker == "interviewer"
     assert record.state.transcript[0].speaker == "candidate"
     assert record.state.transcript[0].text == "I'd use a hash map here."
 
@@ -234,3 +245,123 @@ def test_session_end_transitions_to_review_and_is_idempotent():
     record = ws_module.sessions.get(session_id)
     assert record is not None
     assert record.state.stage == "review"
+
+
+def test_code_update_triggers_the_mock_interviewer_at_intro_stage():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        reply = ws.receive_json()
+        assert reply["type"] == "interviewer.transcript"
+        assert reply["text"]
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.state.recent_interviewer_actions  # the question was recorded to avoid repeats
+
+
+def test_hint_requested_produces_a_hint_response_and_increments_hint_level():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json({"type": "hint.requested"})
+        reply = ws.receive_json()
+        assert reply["type"] == "hint.response"
+        assert reply["level"] == 1
+        assert reply["text"]
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.state.hint_level == 1
+
+
+def test_hint_requested_bypasses_cooldown_but_is_still_capped_at_level_3():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        # three hint requests back-to-back — cooldown would normally block
+        # everything after the first, but hint.requested is exempt (§L rule 2)
+        for _ in range(3):
+            ws.send_json({"type": "hint.requested"})
+            reply = ws.receive_json()
+            assert reply["type"] == "hint.response"
+
+        # a fourth is silently refused — no fourth message on the wire.
+        # prove it by sending something with a real response and checking
+        # that arrives next, not a stray hint.response.
+        ws.send_json({"type": "hint.requested"})
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        next_message = ws.receive_json()
+        assert next_message["code"] == "session_not_found"
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.state.hint_level == 3
+
+
+def test_cooldown_prevents_a_second_interviewer_response_immediately_after_the_first():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        first_reply = ws.receive_json()
+        assert first_reply["type"] == "interviewer.transcript"
+
+        # immediately triggering again is within the cooldown window — no
+        # second interviewer.transcript arrives; prove it the same way as
+        # above, with a distinguishable message that does get a reply.
+        second_update = {
+            "type": "code.update",
+            "language": "python",
+            "code": "def f(): return 1",
+            "timestamp": 2.0,
+        }
+        ws.send_json(second_update)
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        next_message = ws.receive_json()
+        assert next_message["code"] == "session_not_found"
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    # only the first code.update's question was ever recorded
+    assert len(record.state.recent_interviewer_actions) == 1
+
+
+def test_review_stage_never_speaks_again():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json({"type": "session.end"})
+        stage_event = ws.receive_json()
+        assert stage_event["stage"] == "review"
+
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        next_message = ws.receive_json()
+        assert next_message["code"] == "session_not_found"
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.state.recent_interviewer_actions == []

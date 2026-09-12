@@ -404,7 +404,7 @@ Optional live check described above, then flip to `DONE`. Otherwise: proceed to 
 # Feature 07 — Interview state machine
 
 ## Status
-VERIFIED
+DONE
 
 ## Priority
 P0
@@ -413,23 +413,24 @@ P0
 2026-09-13
 
 ## Current task
-Complete except one acceptance criterion that genuinely depends on Feature 08 (see below) — sequencing, not an oversight.
+Complete.
 
 ## Acceptance criteria
 - [x] explicit interview stages exist — `InterviewStage` literal (already defined in `schemas.py` for the event catalogue), `InterviewState.stage`
 - [x] valid transitions are defined — `_TRANSITIONS` table in `state.py`: `intro → clarification → approach → coding`, then coding/complexity/testing/optimisation form a revisitable loop, and `review` (terminal) is additionally reachable from *every* stage — a deliberate interpretation beyond §I's literal arrow diagram, since a candidate can end the interview early from any point and `session.end` must always be able to land on it (documented in `state.py`'s comment)
 - [x] invalid transitions are handled — `IllegalTransitionError`, rejected transition leaves `.stage` unchanged
-- [x] session state persists across events — `code.update` writes `current_code`/`language`, `hint.requested` increments `hint_level`, candidate speech (both `dev.simulate_transcript` and real STT `on_final`) appends to `transcript` — all on the same `InterviewState` instance for the life of the session, survives reconnects (it lives on `SessionRecord`, not the connection)
+- [x] session state persists across events — `code.update` writes `current_code`/`language`, `hint.requested`-triggered hints increment `hint_level`, candidate speech (both `dev.simulate_transcript` and real STT `on_final`) appends to `transcript` — all on the same `InterviewState` instance for the life of the session, survives reconnects (it lives on `SessionRecord`, not the connection)
 - [x] UI receives current stage — `interviewer.state` sent right after `session.started` (stage=`intro`), and again on `session.end` (stage=`review`); consumed by a new `useInterviewStage` hook + `StageBadge` component, independent of the mock engine
-- [ ] controller can trigger interviewer actions — **blocked on Feature 08**: there is no LLM/controller yet to propose an action, so nothing can trigger one. This criterion's own architecture.md §L specifies the controller "folded into Features 07/08" — it was never realistically Feature 07's alone to satisfy. Documented here rather than stubbed out with a fake controller just to check the box.
+- [x] controller can trigger interviewer actions — closed by Feature 08 (2026-09-13): `interview/controller.py`'s `InterviewController` now exists, and `websocket/interview.py`'s `_maybe_speak()` calls it from three real trigger points (`code.update`, transcript-final, `hint.requested`), verified end-to-end at the WS layer through the mock provider
 
 ## Completed
 - `backend/app/interview/state.py` — `InterviewState` (Pydantic, pure — no I/O), `TranscriptEntry`, `IllegalTransitionError`, the transition table and `can_transition_to`/`transition_to`. All fields from CLAUDE.md's "treat interview state as the core domain object" list are present (`problem`, `language`, `stage`, `current_code`, `transcript`, `rubric`, `hint_level`, `recent_interviewer_actions`, `code_analysis_observations`) — the last four stay at empty/zero defaults until the features that populate them land (13, 09, 08 respectively), which is expected, not a gap in this feature.
 - `backend/app/websocket/interview.py` — `SessionRecord.problem`/`.language` replaced by a single `state: InterviewState` (removes duplication); `session.start` now emits `interviewer.state` right after `session.started`; `code.update` and `hint.requested` got their own explicit handling (previously both fell into the generic "accepted but inert" bucket) that writes into `record.state`; both transcript-producing paths (`dev.simulate_transcript`, the STT `on_final` callback) append a `TranscriptEntry`; `session.end` transitions to `review` (idempotently — a second `session.end` doesn't re-transition or crash) and announces it.
 - Extension: `networking/useInterviewStage.ts` (subscribes to `interviewer.state` over the existing socket) + `components/StageBadge.tsx`, wired into `InterviewPanel.tsx` next to `MicBadge`.
+- (2026-09-13, Feature 08) `hint.requested` handling refined: `hint_level` now increments only when a `give_hint` proposal is actually accepted by the controller, not unconditionally — see Feature 08's record.
 
 ## Remaining
-- The "controller can trigger interviewer actions" criterion — genuinely Feature 08's job, tracked there.
+Nothing.
 
 ## Files changed
 - `backend/app/interview/state.py`, `backend/app/websocket/interview.py`, `backend/tests/{test_interview_state,test_websocket_interview}.py`
@@ -443,40 +444,69 @@ Complete except one acceptance criterion that genuinely depends on Feature 08 (s
 - Manual, live Chrome (`claude-in-chrome`, this session) against `leetcode.com/problems/add-two-numbers/description/` with a freshly reloaded extension build: Start → mic badge now reads "MIC ON" (permission was already granted from a prior session's manual test, so this is a real, not merely pending, capture) → End & review renders cleanly, no console errors either way. `StageBadge` correctly renders nothing (stage stays null — no `interviewer.state` ever arrives, since the backend is unreachable from this session's browser, the same tooling constraint as Features 05/06).
 
 ## Verification
-VERIFIED, not DONE — held back solely by the one criterion that depends on Feature 08, not by anything unverified in what this feature actually built. The state machine itself has exhaustive automated coverage (every legal and illegal transition), and the WS-layer wiring is verified via genuine ASGI-level integration tests, same rigor as Features 05/06.
+DONE. The state machine has exhaustive automated coverage (every legal and illegal transition), and the WS-layer wiring — including the controller-triggered path closed by Feature 08 — is verified via genuine ASGI-level integration tests.
 
 ## Known issues/blockers
-None new. Same live-backend-reachability caveat as Features 05/06 applies to seeing a live `interviewer.state` event in the browser, but doesn't affect this feature's actual verification (covered by the WS integration tests instead).
+None. Same live-backend-reachability caveat as Features 05/06/08 applies to seeing a live `interviewer.state` event in a real browser, but doesn't affect this feature's actual verification (covered by the WS integration tests instead).
 
 ## Next action
-Proceed to Phase 6 (Feature 08 — AI interviewer + controller), which is what will both consume `InterviewState` to propose real interviewer actions and close this feature's one remaining criterion.
+None — feature complete.
 
 ---
 
 # Feature 08 — AI interviewer
 
 ## Status
-PLANNED
+VERIFIED
 
 ## Priority
 P0
 
+## started_at
+2026-09-13
+
+## Current task
+Complete except one manual check that needs a real `ANTHROPIC_API_KEY` (see Verification below) — the mock path is fully wired, tested, and verified end-to-end at the WS layer.
+
 ## Acceptance criteria
-- [ ] interviewer receives structured interview state
-- [ ] interviewer can ask contextual questions
-- [ ] interviewer can remain silent
-- [ ] interviewer behaviour changes by stage
-- [ ] response is returned in a typed structure
-- [ ] prompts are versioned/documented
+- [x] interviewer receives structured interview state — `agents/interviewer.py` passes the full `InterviewState` to `interview/prompts.py`, which renders problem/code/recent transcript/hint level/already-said actions into the prompt
+- [x] interviewer can ask contextual questions — the pipeline is real (state → prompt → provider → typed action → controller → event); with the mock provider "contextual" means stage-appropriate, not content-aware (that needs a real model — see Verification)
+- [x] interviewer can remain silent — `remain_silent` is a first-class action; both providers can return it and no event is ever emitted for it (tested at the controller, agent, and WS-integration levels)
+- [x] interviewer behaviour changes by stage — `STAGE_GUIDANCE` + per-stage canned responses in `MockLLMProvider`, tested
+- [x] response is returned in a typed structure — `InterviewerAction` (Pydantic); the real provider forces it via Anthropic tool-use (`tool_choice`), never free-text parsing
+- [x] prompts are versioned/documented — `PROMPT_VERSION` constant in `interview/prompts.py`, extensively commented, unit-tested
 
 ## Completed
-- None yet.
+- `backend/app/interview/actions.py` — `InterviewerAction` (flat model: `action`, optional `message`/`stage_transition`/`rubric_updates`), matching the PRD's example shape where a single response can combine e.g. a stage transition with a spoken message.
+- `backend/app/interview/prompts.py` — versioned system/user prompt builders. The user prompt's first two lines are always `Stage: <stage>` / `Trigger: <trigger>` — a documented, stable contract `providers/llm/mock.py` relies on instead of parsing free text.
+- `backend/app/providers/llm/{base,mock,anthropic}.py` + `__init__.py` factory — same mock-by-default pattern as STT (Feature 05). `MockLLMProvider` gives deterministic, stage-appropriate canned responses (plus a dedicated hint response keyed off the trigger marker) so the whole pipeline is exercisable without a key. `AnthropicLLMProvider` forces structured output via tool-use with `InterviewerAction.model_json_schema()` as the tool's input schema — implemented but **not exercised against a real Anthropic connection this session** (no key available).
+- `backend/app/agents/interviewer.py` — thin orchestration: builds prompts from `InterviewState`, asks the provider, returns the proposal. Doesn't decide whether to execute it.
+- `backend/app/interview/controller.py` — `InterviewController`, the deterministic gate (§L): `can_speak()` (rules 1-2, checked *before* calling the LLM so a cooldown also saves the call, not just the utterance) and `accept_proposal()` (rules 4-6: exact-normalized-text duplicate-question rejection, hint cap enforcement, legal-transition-only). Rule 3 (debounce code-triggered calls) is deliberately **not** re-implemented server-side — the client already debounces every `code.update` before it's ever sent (Feature 04's `codeChangeDetector.ts`), so re-solving the same problem server-side would be redundant; the cooldown rule already prevents over-frequent *speaking* regardless of update frequency.
+- `backend/app/websocket/interview.py` — new `_maybe_speak()` helper wired into three trigger points: `code.update` (after state is updated), transcript-final (both `dev.simulate_transcript` and the real STT `on_final` callback), and `hint.requested`. **Refined Feature 07's hint-handling**: `hint_level` now only increments inside `accept_proposal` when a `give_hint` action is actually accepted — not unconditionally on every `hint.requested` — since the cap now has real enforcement to sit behind, and an LLM could in principle propose `give_hint` on its own initiative from a different trigger, not only in response to an explicit request.
+- `backend/tests/{test_interview_controller,test_prompts,test_interviewer_agent}.py` — the controller suite is the "highest-value test surface" per architecture.md §L, covering every rule with synthetic event sequences.
+- Also closes **Feature 07's last acceptance criterion** ("controller can trigger interviewer actions") — now genuinely true.
 
 ## Remaining
-- All implementation work.
+- The one manual check described in Verification.
+
+## Files changed
+- `backend/app/interview/{actions,prompts,controller}.py`, `backend/app/agents/interviewer.py`, `backend/app/providers/llm/{base,mock,anthropic,__init__}.py`, `backend/app/websocket/interview.py`, `backend/pyproject.toml` (added `anthropic` dependency)
+- `backend/tests/{test_interview_controller,test_prompts,test_interviewer_agent,test_websocket_interview}.py`
+- `TODO.md`
+
+## Tests/checks run
+- `uv run ruff check .` / `uv run pytest -q` (backend) — 119/119 pass. New: `test_interview_controller.py` (14 cases covering every §L rule — cooldown timing, hint-bypasses-cooldown, candidate-speaking overrides hint-bypass, duplicate-question rejection after cooldown, different questions accepted, message-less proposals rejected, remain_silent never resets cooldown, hint cap enforcement including the rejection leaving state unchanged, illegal/legal stage transitions, and whether a transition's optional message does or doesn't reset the cooldown); `test_prompts.py` (5 cases); `test_interviewer_agent.py` (3 cases). `test_websocket_interview.py` gained 6 real end-to-end integration tests through the mock provider: `code.update` at the default intro stage produces a real `interviewer.transcript`; `hint.requested` produces `hint.response` with the correct level and increments `state.hint_level`; three hint requests bypass cooldown but a fourth is silently refused once `hint_level` hits 3; a second code-update immediately after the first is silenced by cooldown (only one question ever recorded); the `review` stage (post `session.end`) never speaks again even when code.update keeps arriving. Two pre-existing tests updated: one relied on `hint.requested` having no server response (no longer true — swapped its "harmless filler" event for `screen.recording.started`), the other's transcript-length assertion updated now that `dev.simulate_transcript` also triggers a real (not simulated) interviewer reply at intro stage.
+- `npm run --workspace extension typecheck/lint/test/build` — unaffected, no extension files changed this feature (see Remaining/next note below on UI wiring)
+
+## Verification
+VERIFIED, not DONE. The full pipeline — state → prompt → mock provider → controller → typed WS event — is verified for real via genuine ASGI-level WebSocket integration tests, not mocked at the wire level, same rigor as every other feature this project. What's not verified: an actual call to the real Anthropic API, which needs a key not available in this environment, and which is also the only way to honestly assess "contextually relevant" in the sense architecture.md §J's "Done when" means (referencing the *literal* current code/transcript content, not just picking the right canned line for the stage). This is the same category of gap as Feature 05's Deepgram provider — implemented against the documented API, structurally sound, unverified live.
+
+## Known issues/blockers
+- The one real-Anthropic-API check described above.
+- **Not done this feature, flagged rather than silently skipped:** the extension's transcript panel is still driven entirely by `state/mockEngine.ts` (Feature 02). Real `interviewer.transcript`/`hint.response`/candidate transcript events now genuinely flow from the backend (verified above), but nothing in the extension consumes them into the visible UI yet. TODO.md's Phase 6 checklist never included that wiring — it was reasonable to expect Feature 08 might do it, but the actual planned scope is backend-only, so it wasn't done without being asked. Worth doing as a deliberate next step if wanted, not assumed.
 
 ## Next action
-Implement interviewer provider interface and controller integration.
+Proceed to Phase 7 (Feature 10 — ElevenLabs TTS) per `TODO.md`, or — if wanted — first wire the extension's transcript panel to real WS events (not currently scoped/planned, would need explicit go-ahead).
 
 ---
 

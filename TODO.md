@@ -68,11 +68,11 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 6 — AI interviewer + controller (Feature 08)
 
-- [ ] `providers/llm/base.py`, `mock.py`, `anthropic.py`
-- [ ] `agents/interviewer.py` + `interview/prompts.py` (versioned, stage-specific)
-- [ ] `interview/controller.py`: silence/cooldown/dedup/debounce rules per `architecture.md` §L
-- [ ] Unit tests over the gating rules using synthetic event sequences
-- [ ] Manual verification: real code + real transcript produces a contextually relevant question
+- [x] `providers/llm/base.py`, `mock.py`, `anthropic.py`
+- [x] `agents/interviewer.py` + `interview/prompts.py` (versioned, stage-specific)
+- [x] `interview/controller.py`: silence/cooldown/dedup/debounce rules per `architecture.md` §L
+- [x] Unit tests over the gating rules using synthetic event sequences
+- [ ] Manual verification: real code + real transcript produces a contextually relevant question — still open, needs a real `ANTHROPIC_API_KEY` (the mock path is fully verified, but "contextually relevant" is inherently unverifiable without a real model — see `FEATURE_PROGRESS.md` Feature 08)
 
 ## Phase 7 — ElevenLabs TTS (Feature 10)
 

@@ -1,14 +1,16 @@
 """WebSocket session transport (Feature 06 — architecture.md §G), the STT
-audio relay (Feature 05 — architecture.md §E/§H), and the interview state
-machine wiring (Feature 07 — architecture.md §I).
+audio relay (Feature 05 — architecture.md §E/§H), the interview state
+machine wiring (Feature 07 — architecture.md §I), and the AI interviewer
++ controller (Feature 08 — architecture.md §J/§L).
 
 Owns connection lifecycle, event validation, the resume/replay protocol,
-forwarding binary mic-audio frames to a per-session STT provider, and
-keeping each session's InterviewState up to date as events arrive. It
-does not call the LLM or compute the rubric — those are Features 08/13,
-layered on top of this transport later. hint.requested/screen.recording.*
-are validated and keep the session alive but don't yet drive any
-interviewer behaviour (that's the controller, Feature 08/§L).
+forwarding binary mic-audio frames to a per-session STT provider, keeping
+each session's InterviewState up to date as events arrive, and — via
+_maybe_speak — asking the interviewer agent for a proposed action and
+having the controller decide whether to actually execute it.
+screen.recording.*/session.pause are validated and keep the session alive
+but don't yet drive any behaviour (Features 08's controller only reacts to
+code/transcript/hint events right now; recording state is Feature 12).
 """
 
 from __future__ import annotations
@@ -23,14 +25,19 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
-from app.config import get_settings
+from app.agents.interviewer import propose_interviewer_action
+from app.config import Settings, get_settings
+from app.interview.controller import InterviewController
+from app.interview.prompts import Trigger
 from app.interview.schemas import (
     CLIENT_EVENT_ADAPTER,
     CodeUpdateEvent,
     DevSimulateTranscriptEvent,
     ErrorEvent,
     HintRequestedEvent,
+    HintResponseEvent,
     InterviewerStateEvent,
+    InterviewerTranscriptEvent,
     ProblemInfo,
     SessionEndEvent,
     SessionResumeEvent,
@@ -40,6 +47,7 @@ from app.interview.schemas import (
     TranscriptPartialEvent,
 )
 from app.interview.state import InterviewState, TranscriptEntry
+from app.providers.llm import get_llm_provider
 from app.providers.stt import get_stt_provider
 from app.providers.stt.base import STTSession
 
@@ -56,6 +64,7 @@ RING_BUFFER_SIZE = 200
 class SessionRecord:
     session_id: str
     state: InterviewState
+    controller: InterviewController
     seq: int = 0
     events: deque[dict] = field(default_factory=lambda: deque(maxlen=RING_BUFFER_SIZE))
     last_seen: float = field(default_factory=time.monotonic)
@@ -83,7 +92,8 @@ class SessionRegistry:
     def create(self, problem: ProblemInfo, language: str) -> SessionRecord:
         session_id = str(uuid.uuid4())
         state = InterviewState(problem=problem, language=language)
-        record = SessionRecord(session_id=session_id, state=state)
+        controller = InterviewController(state)
+        record = SessionRecord(session_id=session_id, state=state, controller=controller)
         self._sessions[session_id] = record
         return record
 
@@ -122,7 +132,52 @@ async def _send_error(ws: WebSocket, seq: int, code: str, message: str, recovera
     await ws.send_json(event.model_dump())
 
 
-def _make_transcript_callbacks(session_id: str):
+async def _maybe_speak(
+    record: SessionRecord,
+    settings: Settings,
+    *,
+    trigger: Trigger = "code_update",
+    hint_requested: bool = False,
+) -> None:
+    """Asks the interviewer agent for a proposal and, if the controller
+    accepts it, emits whatever event that proposal implies. Silence
+    (remain_silent, or any rejected proposal) emits nothing at all — that
+    is the intended behaviour (CLAUDE.md: "the interviewer should not
+    speak on every event"), not a missing code path."""
+    now = time.time()
+    if not record.controller.can_speak(now=now, hint_requested=hint_requested):
+        return
+
+    provider = get_llm_provider(settings)
+    proposal = await propose_interviewer_action(record.state, provider, trigger=trigger)
+    accepted = record.controller.accept_proposal(proposal, now=now)
+    if accepted is None:
+        return
+
+    if accepted.action == "ask_question" and accepted.message:
+        record.state.recent_interviewer_actions.append(f"asked: {accepted.message}")
+        entry = TranscriptEntry(speaker="interviewer", text=accepted.message, timestamp=now)
+        record.state.transcript.append(entry)
+        event = InterviewerTranscriptEvent(seq=0, text=accepted.message)
+        await _emit(record, event.model_dump())
+
+    elif accepted.action == "give_hint" and accepted.message:
+        level = record.state.hint_level
+        record.state.recent_interviewer_actions.append(f"hint (level {level}): {accepted.message}")
+        event = HintResponseEvent(seq=0, level=level, text=accepted.message)
+        await _emit(record, event.model_dump())
+
+    elif accepted.action == "transition_stage":
+        stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
+        await _emit(record, stage_event.model_dump())
+        if accepted.message:
+            entry = TranscriptEntry(speaker="interviewer", text=accepted.message, timestamp=now)
+            record.state.transcript.append(entry)
+            transcript_event = InterviewerTranscriptEvent(seq=0, text=accepted.message)
+            await _emit(record, transcript_event.model_dump())
+
+
+def _make_transcript_callbacks(session_id: str, settings: Settings):
     """STT provider callbacks close over a session_id, not a SessionRecord
     or WebSocket, so they keep working correctly even if the session has
     since been resumed on a different connection (or none at all)."""
@@ -143,6 +198,7 @@ def _make_transcript_callbacks(session_id: str):
         record.state.transcript.append(entry)
         event = TranscriptFinalEvent(seq=0, text=text, timestamp=timestamp)
         await _emit(record, event.model_dump())
+        await _maybe_speak(record, settings, trigger="transcript_final")
 
     return on_partial, on_final
 
@@ -196,7 +252,7 @@ async def interview_socket(ws: WebSocket) -> None:
             if isinstance(client_event, SessionStartEvent):
                 record = sessions.create(client_event.problem, client_event.language)
                 record.active_ws = ws
-                on_partial, on_final = _make_transcript_callbacks(record.session_id)
+                on_partial, on_final = _make_transcript_callbacks(record.session_id, settings)
                 try:
                     record.stt_session = await get_stt_provider(settings).start_session(
                         on_partial, on_final
@@ -244,19 +300,24 @@ async def interview_socket(ws: WebSocket) -> None:
                 )
                 final = TranscriptFinalEvent(seq=0, text=client_event.text, timestamp=timestamp)
                 await _emit(record, final.model_dump())
+                await _maybe_speak(record, settings, trigger="transcript_final")
                 continue
 
             if isinstance(client_event, CodeUpdateEvent):
                 record.state.current_code = client_event.code
                 record.state.language = client_event.language
                 record.last_seen = time.monotonic()
+                await _maybe_speak(record, settings, trigger="code_update")
                 continue
 
             if isinstance(client_event, HintRequestedEvent):
-                # Uncapped here deliberately — refusing hints beyond level 3
-                # is the controller's job (architecture.md §L rule 6), not
-                # built yet (Feature 08). This just keeps the count correct.
-                record.state.hint_level += 1
+                # hint_level itself is incremented inside accept_proposal
+                # (interview/controller.py) only once a give_hint action is
+                # actually accepted — that's the single source of truth for
+                # the level-3 cap (architecture.md §L rule 6), whether the
+                # hint was explicitly requested (here) or proposed by the
+                # LLM on its own initiative from another trigger.
+                await _maybe_speak(record, settings, trigger="hint_requested", hint_requested=True)
                 record.last_seen = time.monotonic()
                 continue
 
