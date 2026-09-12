@@ -18,6 +18,14 @@ const RECONNECT_MAX_MS = 15000;
 
 export interface InterviewSocket {
   send(event: ClientEvent): void;
+  /**
+   * Sends a raw mic-audio chunk as a binary WS frame — no JSON envelope,
+   * per the framing convention in architecture.md §G. Silently dropped
+   * (not queued) if there's no open connection with an active session yet;
+   * the caller (media/useMicrophoneCapture.ts) doesn't need to track
+   * connection/session state itself to know when this is safe to call.
+   */
+  sendAudioChunk(chunk: Blob): void;
   onEvent(handler: (event: ServerEvent) => void): () => void;
   onStateChange(handler: (state: ConnectionState) => void): () => void;
   close(): void;
@@ -32,7 +40,7 @@ export interface WebSocketLikeEvent {
 }
 export interface WebSocketLike {
   readyState: number;
-  send(data: string): void;
+  send(data: string | Blob | ArrayBufferLike): void;
   close(): void;
   addEventListener(
     type: "open" | "close" | "error" | "message",
@@ -128,6 +136,11 @@ export function connectInterviewSocket(
       // backend will reject anyway.
       clientEventSchema.parse(event);
       rawSend(event);
+    },
+    sendAudioChunk(chunk) {
+      if (sessionId && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(chunk);
+      }
     },
     onEvent(handler) {
       eventHandlers.add(handler);

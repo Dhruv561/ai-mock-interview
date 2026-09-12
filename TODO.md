@@ -55,10 +55,10 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 4 — Microphone + STT (Feature 05)
 
-- [ ] `microphone.ts`: `getUserMedia`, `MediaRecorder` chunking, permission-denied UX
-- [ ] `providers/stt/base.py`, `mock.py`, `deepgram.py`
-- [ ] `dev.simulate_transcript` event wired end-to-end (mock-mode gated)
-- [ ] Manual verification with a real mic + Deepgram key
+- [x] `microphone.ts`: `getUserMedia`, `MediaRecorder` chunking, permission-denied UX
+- [x] `providers/stt/base.py`, `mock.py`, `deepgram.py`
+- [x] `dev.simulate_transcript` event wired end-to-end (mock-mode gated)
+- [ ] Manual verification with a real mic + Deepgram key — still open, needs a real key + a machine where the browser can reach the backend (see `FEATURE_PROGRESS.md` Feature 05/06)
 
 ## Phase 5 — Interview state machine (Feature 07)
 

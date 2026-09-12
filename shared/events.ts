@@ -1,13 +1,22 @@
 // Zod mirror of backend/app/interview/schemas.py (source of truth). See
 // README.md for the sync policy. Only session.start/pause/resume/end,
-// code.update, transcript.final, hint.requested, screen.recording.*,
-// dev.simulate_transcript (client events), plus session.started and error
-// (server events) are actually sent/consumed today, by
-// extension/src/networking/websocket.ts and
-// backend/app/websocket/interview.py (Feature 06). The remaining server
-// event types (interviewer.*, transcript.partial, rubric.updated,
-// hint.response, review.ready) are typed contracts ahead of the features
-// that will emit them (07/08/10/11/13/14) — nothing sends them yet.
+// code.update, hint.requested, screen.recording.*, dev.simulate_transcript
+// (client events), plus session.started, transcript.partial,
+// transcript.final and error (server events) are actually sent/consumed
+// today, by networking/websocket.ts + backend/app/websocket/interview.py
+// (Feature 06) and the STT pipeline (backend/app/providers/stt/*,
+// Feature 05). The remaining server event types (interviewer.*,
+// rubric.updated, hint.response, review.ready) are typed contracts ahead
+// of the features that will emit them (07/08/11/13/14) — nothing sends
+// them yet.
+//
+// Deliberate PRD deviation: PRD.md §9 lists transcript.partial/final under
+// client events and omits them from the server list. That doesn't match
+// this project's own committed architecture (architecture.md §E/§H) — the
+// client streams raw mic audio, and the backend's STT provider is what
+// produces partial/final transcript segments, so both are server -> client
+// here. See backend/app/interview/schemas.py's module docstring and
+// architecture.md §G for the full note.
 import { z } from "zod";
 
 export const difficultySchema = z.enum(["Easy", "Medium", "Hard"]);
@@ -79,12 +88,6 @@ export const sessionEndEventSchema = z.object({
   type: z.literal("session.end"),
 });
 
-export const transcriptFinalEventSchema = z.object({
-  type: z.literal("transcript.final"),
-  text: z.string(),
-  timestamp: z.number(),
-});
-
 export const codeUpdateEventSchema = z.object({
   type: z.literal("code.update"),
   language: z.string(),
@@ -114,7 +117,6 @@ export const clientEventSchema = z.discriminatedUnion("type", [
   sessionPauseEventSchema,
   sessionResumeEventSchema,
   sessionEndEventSchema,
-  transcriptFinalEventSchema,
   codeUpdateEventSchema,
   screenRecordingStartedEventSchema,
   screenRecordingStoppedEventSchema,
@@ -159,6 +161,12 @@ export const transcriptPartialEventSchema = baseServerEventSchema.extend({
   text: z.string(),
 });
 
+export const transcriptFinalEventSchema = baseServerEventSchema.extend({
+  type: z.literal("transcript.final"),
+  text: z.string(),
+  timestamp: z.number(),
+});
+
 export const rubricUpdatedEventSchema = baseServerEventSchema.extend({
   type: z.literal("rubric.updated"),
   rubric: z.record(rubricCategorySchema, z.number()),
@@ -190,6 +198,7 @@ export const serverEventSchema = z.discriminatedUnion("type", [
   interviewerAudioStartEventSchema,
   interviewerAudioEndEventSchema,
   transcriptPartialEventSchema,
+  transcriptFinalEventSchema,
   rubricUpdatedEventSchema,
   hintResponseEventSchema,
   reviewReadyEventSchema,

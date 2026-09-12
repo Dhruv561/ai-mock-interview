@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+import app.websocket.interview as ws_module
 from app.main import app
 
 client = TestClient(app)
@@ -93,6 +94,81 @@ def test_resume_does_not_replay_already_seen_events():
 
 def test_resume_unknown_session_is_rejected():
     with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        error = ws.receive_json()
+        assert error["code"] == "session_not_found"
+
+
+def test_audio_chunk_before_session_start_is_rejected():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_bytes(b"\x00\x01\x02")
+        error = ws.receive_json()
+        assert error["code"] == "no_active_session"
+
+
+def test_audio_chunks_reach_the_mock_stt_session():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+
+        ws.send_bytes(b"fake-opus-bytes-1")
+        ws.send_bytes(b"fake-opus-bytes-2")
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.stt_session is not None
+    assert record.stt_session.chunks_received == 2
+
+
+def test_dev_simulate_transcript_produces_partial_then_final():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        ws.receive_json()  # session.started
+
+        ws.send_json({"type": "dev.simulate_transcript", "text": "I'd use a hash map here."})
+
+        partial = ws.receive_json()
+        assert partial["type"] == "transcript.partial"
+        assert partial["text"] == "I'd use a hash map here."
+
+        final = ws.receive_json()
+        assert final["type"] == "transcript.final"
+        assert final["text"] == "I'd use a hash map here."
+        assert isinstance(final["timestamp"], float)
+
+
+def test_dev_simulate_transcript_rejected_when_mock_providers_disabled(monkeypatch):
+    real_settings = ws_module.get_settings()
+    fake_settings = real_settings.model_copy(update={"use_mock_providers": False})
+    monkeypatch.setattr(ws_module, "get_settings", lambda: fake_settings)
+
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        ws.receive_json()  # session.started
+
+        ws.send_json({"type": "dev.simulate_transcript", "text": "hello"})
+        error = ws.receive_json()
+        assert error["code"] == "mock_only"
+
+
+def test_stt_provider_start_failure_degrades_gracefully(monkeypatch):
+    class FailingProvider:
+        async def start_session(self, on_partial, on_final):
+            raise ConnectionError("provider unreachable")
+
+    monkeypatch.setattr(ws_module, "get_stt_provider", lambda settings: FailingProvider())
+
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        # session still starts even though the STT provider couldn't connect
+        assert started["type"] == "session.started"
+
+        # audio can still be sent — it's just silently dropped, not fatal
+        ws.send_bytes(b"some-audio")
+
+        # the connection is still alive and processing messages afterward
         ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
         error = ws.receive_json()
         assert error["code"] == "session_not_found"

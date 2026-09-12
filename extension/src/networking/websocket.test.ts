@@ -17,15 +17,20 @@ const PROBLEM: ProblemInfo = {
 
 class FakeWebSocket implements WebSocketLike {
   readyState = 0; // CONNECTING
-  sent: string[] = [];
+  sentText: string[] = [];
+  sentBinary: Array<Blob | ArrayBufferLike> = [];
   private listeners: Record<string, Array<(event: WebSocketLikeEvent) => void>> = {};
 
   addEventListener(type: string, listener: (event: WebSocketLikeEvent) => void) {
     (this.listeners[type] ??= []).push(listener);
   }
 
-  send(data: string) {
-    this.sent.push(data);
+  send(data: string | Blob | ArrayBufferLike) {
+    if (typeof data === "string") {
+      this.sentText.push(data);
+    } else {
+      this.sentBinary.push(data);
+    }
   }
 
   close() {
@@ -76,7 +81,7 @@ describe("connectInterviewSocket", () => {
 
     socket.send({ type: "session.start", problem: PROBLEM, language: "python" });
 
-    expect(JSON.parse(sockets[0].sent[0])).toEqual({
+    expect(JSON.parse(sockets[0].sentText[0])).toEqual({
       type: "session.start",
       problem: PROBLEM,
       language: "python",
@@ -137,7 +142,7 @@ describe("connectInterviewSocket", () => {
       expect(sockets).toHaveLength(2);
 
       sockets[1].triggerOpen();
-      expect(JSON.parse(sockets[1].sent[0])).toEqual({
+      expect(JSON.parse(sockets[1].sentText[0])).toEqual({
         type: "session.resume",
         session_id: "abc-123",
         last_seq: 1,
@@ -146,6 +151,28 @@ describe("connectInterviewSocket", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not send an audio chunk before a session exists", () => {
+    const { sockets, factory } = makeFactory();
+    const socket = connectInterviewSocket("ws://test", factory);
+    sockets[0].triggerOpen();
+
+    socket.sendAudioChunk(new Blob(["chunk"]));
+
+    expect(sockets[0].sentBinary).toHaveLength(0);
+  });
+
+  it("sends an audio chunk as a binary frame once a session exists", () => {
+    const { sockets, factory } = makeFactory();
+    const socket = connectInterviewSocket("ws://test", factory);
+    sockets[0].triggerOpen();
+    sockets[0].triggerMessage({ type: "session.started", seq: 1, session_id: "abc-123" });
+
+    const chunk = new Blob(["chunk"]);
+    socket.sendAudioChunk(chunk);
+
+    expect(sockets[0].sentBinary).toEqual([chunk]);
   });
 
   it("does not reconnect after the caller explicitly closes the socket", () => {

@@ -1,3 +1,5 @@
+import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
+import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterview } from "../state/interviewStore";
 import {
   buildMockReview,
@@ -6,6 +8,7 @@ import {
 } from "../state/mockEngine";
 import { EndReviewButton } from "./EndReviewButton";
 import { HintButton } from "./HintButton";
+import { MicBadge } from "./MicBadge";
 import { Review } from "./Review";
 import { StartScreen } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
@@ -18,14 +21,18 @@ const MAX_HINT_LEVEL = 3;
  * mocked data, no backend). A later phase replaces the mock engine's
  * dispatch calls with translated server events over the real WebSocket
  * (networking/websocket.ts) without changing this component or the
- * reducer/types beneath it.
+ * reducer/types beneath it. Mic capture (Feature 05) is real and wired
+ * directly to Start/End here, independent of the mock engine — same
+ * pattern as the connection badge in App.tsx.
  */
 export function InterviewPanel() {
   const { state, dispatch } = useInterview();
   useMockInterviewEngine(state.status, dispatch);
+  const mic = useMicrophoneCapture(getInterviewSocket());
 
   function handleStart() {
     dispatch({ type: "session/start" });
+    void mic.start();
   }
 
   function handleHint() {
@@ -43,6 +50,7 @@ export function InterviewPanel() {
   }
 
   function handleEnd() {
+    mic.stop();
     dispatch({ type: "session/end" });
     dispatch({
       type: "review/ready",
@@ -65,6 +73,7 @@ export function InterviewPanel() {
            * candidates aren't watching live numbers during the interview.
            * See architecture.md §1 and progress.md decisions log.
            */}
+          <MicBadge status={mic.status} />
           <Transcript messages={state.messages} />
           <div className="flex gap-2 px-5 py-4">
             <HintButton

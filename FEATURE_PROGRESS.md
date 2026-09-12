@@ -278,27 +278,66 @@ None — feature complete.
 # Feature 05 — Microphone and speech-to-text
 
 ## Status
-PLANNED
+VERIFIED
 
 ## Priority
 P0
 
+## started_at
+2026-09-12
+
+## Current task
+Complete except one manual check that needs a real Deepgram key + a machine where the browser can reach the backend (see Verification below) — same class of gap as Feature 06, not a known code defect.
+
 ## Acceptance criteria
-- [ ] microphone permission flow works
-- [ ] candidate audio is captured
-- [ ] streaming/partial transcript supported where provider allows
-- [ ] final transcript events are produced
-- [ ] reconnect/error behaviour exists
-- [ ] transcript reaches backend
+- [x] microphone permission flow works — `getUserMedia` requested on Start, denial/no-hardware/unsupported-browser all resolve to a status the UI shows instead of throwing
+- [x] candidate audio is captured — `MediaRecorder` chunked every 250ms (WebM/Opus)
+- [x] streaming/partial transcript supported where provider allows — `transcript.partial` server event exists and is emitted (mock path via `dev.simulate_transcript`, real path via Deepgram's `interim_results`)
+- [x] final transcript events are produced — `transcript.final` server event, same two paths
+- [x] reconnect/error behaviour exists — WS reconnect already covered by Feature 06; STT-provider-start failure now degrades the session gracefully instead of killing it (architecture.md §H risk)
+- [x] transcript reaches backend — binary audio frames relayed to the session's STT provider over the existing `/ws/interview` connection
 
 ## Completed
-- None yet.
+- **Architecture correction found while implementing this** (documented per CLAUDE.md's "do not silently change requirements" rule, not silently patched): `transcript.final` had shipped in Feature 06 as a *client* event, copying a PRD.md §9 listing that conflicts with this project's own server-side-STT design (architecture.md §E/§H — the backend's STT provider produces both partial and final segments, the client has no way to originate them). Moved to the server catalogue in `backend/app/interview/schemas.py` and `shared/events.ts`, alongside `transcript.partial`. See architecture.md §G for the full note.
+- `backend/app/providers/stt/base.py` — `STTProvider`/`STTSession` `Protocol`s: `start_session(on_partial, on_final)` returns a session with `send_audio(chunk)`/`close()`.
+- `backend/app/providers/stt/mock.py` — `MockSTTProvider`/`MockSTTSession`: accepts real audio chunks (so the transport is genuinely exercised) but doesn't fabricate transcripts from them; `dev.simulate_transcript` is the real mock-mode path for exercising `transcript.partial`/`transcript.final`, handled directly by the WS layer, not this provider.
+- `backend/app/providers/stt/deepgram.py` — real streaming provider (`websockets` client to Deepgram's `/v1/listen`, a relay task translating `is_final`/`speech_final` into `on_final` vs `on_partial`). Not exercised against a real Deepgram connection this session (no key available) — see Verification.
+- `backend/app/providers/stt/__init__.py` — `get_stt_provider(settings)`: mock if `use_mock_providers` or no `deepgram_api_key`, else Deepgram.
+- `backend/app/websocket/interview.py` — reworked the receive loop to use raw `ws.receive()` instead of `receive_text()`, so it can branch on binary vs. text frames; binary frames are relayed to `record.stt_session.send_audio()` (or answered with `no_active_session` if there's no session yet, same as any other event needing one). Added `SessionRecord.active_ws`/`stt_session`; `_emit` now routes through `record.active_ws` (looked up fresh, not captured by closure) so STT callbacks — which fire from a background task, possibly after a reconnect moved the session to a different connection — always reach whichever connection is actually live, and still buffer for replay even when none is. `dev.simulate_transcript` emits `transcript.partial` then `transcript.final` directly, rejected with a `mock_only` error when `USE_MOCK_PROVIDERS` is false. STT provider start failures are caught (`record.stt_session = None`) so the session still starts.
+- `extension/src/media/microphone.ts` — `requestMicrophoneStream()` (never throws — permission denial/no hardware resolve to `null`), `startMicrophoneCapture()` (injectable `MediaRecorderFactory`/`isTypeSupported`, same testability pattern as `networking/websocket.ts`'s `WebSocketFactory`; 250ms chunks, drops empty ones, releases the mic on `stop()` or on an unsupported-mime-type bailout).
+- `extension/src/networking/websocket.ts` — `sendAudioChunk(chunk)` added to `InterviewSocket`: sends a raw binary frame (no JSON envelope, per architecture.md §G's framing convention), silently dropped if there's no open connection with an active session.
+- `extension/src/media/useMicrophoneCapture.ts` — React hook (`status`, `start()`, `stop()`) wiring mic capture to the socket singleton, independent of `state/interviewStore`'s mock engine.
+- `extension/src/components/MicBadge.tsx` — small status line (MIC OFF/REQUESTING MIC…/MIC ON/MIC BLOCKED/MIC UNSUPPORTED), shown in the live panel next to the transcript.
+- `InterviewPanel.tsx` — `handleStart`/`handleEnd` now also call `mic.start()`/`mic.stop()`, alongside (not replacing) the mock engine that still drives the visible interview flow.
 
 ## Remaining
-- All implementation work.
+- The one live check described in Verification.
+
+## Files changed
+- `backend/app/interview/schemas.py`, `backend/app/websocket/interview.py`, `backend/app/providers/stt/{base,mock,deepgram,__init__}.py`, `backend/tests/{test_websocket_interview,test_stt_providers}.py`
+- `shared/events.ts`
+- `extension/src/media/{microphone,microphone.test,useMicrophoneCapture,useMicrophoneCapture.test}.ts`, `extension/src/networking/{websocket,websocket.test}.ts`, `extension/src/components/{MicBadge,InterviewPanel}.tsx`
+- `architecture.md`, `TODO.md`
+
+## Tests/checks run
+- `uv run ruff check .` / `uv run pytest -q` (backend) — 23/23 pass, incl. new `test_stt_providers.py` (5 cases: mock session chunk counting, mock provider start, factory returns mock when mock-mode/no-key/either, factory returns Deepgram when configured) and new cases in `test_websocket_interview.py` (audio-before-session rejected, audio chunks reach the mock STT session's `chunks_received`, `dev.simulate_transcript` → partial then final, `dev.simulate_transcript` rejected when mock providers disabled, STT provider start failure degrades gracefully and the connection keeps working afterward)
+- `npm run --workspace extension test` — 45/45 pass, incl. new `microphone.test.ts` (5 cases: resolves stream/null, starts recorder on 250ms timeslice, forwards non-empty chunks and drops empty ones, stop() releases recorder+tracks, unsupported mime type returns null and releases the mic), new `useMicrophoneCapture.test.ts` (5 cases: idle by default, denied on refusal, active + forwards chunks to the socket, unsupported without throwing, stop() resets to idle), and 2 new `sendAudioChunk` cases in `websocket.test.ts` (dropped with no session, sent as a binary frame once a session exists)
+- `npm run --workspace extension typecheck` / `lint` / `build` — all pass
+- Manual, live Chrome (`claude-in-chrome`, this session) against `leetcode.com/problems/add-two-numbers/description/` with a freshly reloaded extension build: clicked "Start AI Interview" → mic badge correctly shows "REQUESTING MIC…", `navigator.permissions.query({name:'microphone'})` confirmed the browser genuinely entered its native permission-prompt state (proving `getUserMedia` was actually called, not skipped), no console errors; clicked "End & review" *without* granting the permission first → review screen still rendered correctly (`mic.stop()` on a capture that never started is a safe no-op) — no regression, no crash
+
+## Verification
+VERIFIED, not DONE. The STT relay pipeline (binary frame → provider → typed transcript events) is verified for real against the mock provider via genuine ASGI-level WebSocket tests, same as Feature 06. What's not verified this session, for two separate reasons:
+1. Granting the actual mic permission and confirming real audio bytes flow requires a human clicking the native Chrome permission prompt — not something to force through browser automation (same category as the `chrome://extensions` limitation from Feature 02).
+2. The real `DeepgramSTTProvider` has no API key available in this environment to connect with, and even with one, this session's browser still can't reach `localhost:8000` at all (the network-isolation finding from Feature 06's Verification note) — so a full mic → backend → Deepgram → transcript.final round trip can't happen from here regardless.
+Both are tooling/environment constraints, not known code defects — the mock-mode path (`dev.simulate_transcript`) proves the entire event-flow half of the pipeline works; only "real audio, real provider" is unverified.
+Next action for whoever picks this up: on a machine where the browser and backend share a network, with `DEEPGRAM_API_KEY` set and `USE_MOCK_PROVIDERS=false`, click Start, grant the mic permission, speak, and confirm `transcript.partial`/`transcript.final` events arrive — if they do, flip this and Feature 06 to `DONE` together.
+
+## Known issues/blockers
+- Same WS-endpoint auth/origin gap already tracked under Feature 06 — applies here too since audio flows over the same connection.
+- The one live mic+Deepgram check described above, blocked by tooling/no-key, not a known code defect.
 
 ## Next action
-Implement the browser audio manager and provider interface.
+Optional live check described above, then flip to `DONE` (alongside Feature 06). Otherwise: proceed to Phase 5 (Feature 07 — interview state machine), the next item in `TODO.md`.
 
 ---
 
@@ -325,7 +364,7 @@ Complete except one live-in-a-real-browser-against-a-real-backend check, blocked
 - [x] connection state is reflected in UI
 
 ## Completed
-- `backend/app/interview/schemas.py` — full typed event catalogue (architecture.md §G): all 10 client events and all 10 server events as discriminated-union Pydantic models (`Field(discriminator="type")`), incl. `ProblemInfo`/`FinalReview`/`TimelineEvent`. Only session.start/pause/resume/end, code.update, transcript.final, hint.requested, screen.recording.*, dev.simulate_transcript (client) and session.started/error (server) are actually produced/consumed by anything yet — the rest (interviewer.*, transcript.partial, rubric.updated, hint.response, review.ready) are typed contracts ahead of Features 07/08/10/11/13/14, per CLAUDE.md's "use typed contracts" rule.
+- `backend/app/interview/schemas.py` — full typed event catalogue (architecture.md §G): all 9 client events and all 11 server events as discriminated-union Pydantic models (`Field(discriminator="type")`), incl. `ProblemInfo`/`FinalReview`/`TimelineEvent`. Only session.start/pause/resume/end, code.update, hint.requested, screen.recording.*, dev.simulate_transcript (client) and session.started/error (server) were produced/consumed by anything at the time this feature landed — the rest (interviewer.*, transcript.partial, transcript.final, rubric.updated, hint.response, review.ready) were typed contracts ahead of the features that would emit them, per CLAUDE.md's "use typed contracts" rule. **Correction (2026-09-12, while implementing Feature 05):** `transcript.final` was originally shipped here as a *client* event, copying a PRD.md §9 listing that itself conflicts with this project's own server-side-STT architecture (§E/§H) — moved to the server catalogue alongside `transcript.partial`, since the backend's STT provider is what actually produces both. See architecture.md §G for the full note.
 - `backend/app/websocket/interview.py` — `/ws/interview` endpoint, module-level in-memory `SessionRegistry` (session survives a disconnect for a 5-minute grace window, keyed independently of the socket so a new connection can resume it), per-session seq counter + 200-entry ring buffer for replay, malformed-JSON/failed-validation/no-active-session/unknown-session-on-resume all answered with a typed `error` event without closing the connection.
 - `shared/events.ts` — Zod mirror of the same catalogue (discriminated unions via `z.discriminatedUnion("type", ...)`).
 - `shared/fixtures/{session_start,code_update,session_started,error}.json` + contract tests on both sides (`backend/tests/test_event_fixtures.py`, `extension/src/networking/eventFixtures.test.ts`).

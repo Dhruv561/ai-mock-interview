@@ -6,14 +6,28 @@ updated in the same commit whenever a shape here changes. See
 architecture.md §G for the full protocol design (framing, reconnect,
 event catalogue).
 
-Only session.start/pause/resume/end, code.update, transcript.final,
-hint.requested, screen.recording.*, dev.simulate_transcript (client events),
-plus session.started and error (server events) are actually produced or
-consumed today, by app/websocket/interview.py (Feature 06). The remaining
-server event types (interviewer.*, transcript.partial, rubric.updated,
-hint.response, review.ready) are defined here as typed contracts ahead of
-the features that will emit them (07/08/10/11/13/14), per CLAUDE.md's "use
-typed contracts" rule — nothing sends them yet.
+Only session.start/pause/resume/end, code.update, hint.requested,
+screen.recording.*, dev.simulate_transcript (client events), plus
+session.started, transcript.partial, transcript.final and error (server
+events) are actually produced or consumed today, by
+app/websocket/interview.py (Feature 06) and the STT pipeline
+(app/providers/stt/*, Feature 05). The remaining server event types
+(interviewer.*, rubric.updated, hint.response, review.ready) are defined
+here as typed contracts ahead of the features that will emit them
+(07/08/11/13/14), per CLAUDE.md's "use typed contracts" rule — nothing
+sends them yet.
+
+Deliberate PRD deviation (documented per CLAUDE.md's "do not silently
+change requirements" rule): PRD.md §9 lists transcript.partial/transcript.final
+under "Client -> backend events" and omits them from the server list
+entirely. That doesn't match this project's own already-committed
+architecture (architecture.md §E/§H): the client streams raw mic audio to
+the backend, and the backend's STT provider is what produces partial/final
+transcript segments — the client has no way to originate them itself. Both
+events are server -> client here, matching §H's component spec (which
+already described them that way) rather than §G's original catalogue
+listing (which copied the PRD's placement without checking it against §H).
+See architecture.md §G for the full note.
 """
 
 from typing import Annotated, Literal
@@ -92,12 +106,6 @@ class SessionEndEvent(BaseModel):
     type: Literal["session.end"] = "session.end"
 
 
-class TranscriptFinalEvent(BaseModel):
-    type: Literal["transcript.final"] = "transcript.final"
-    text: str
-    timestamp: float
-
-
 class CodeUpdateEvent(BaseModel):
     type: Literal["code.update"] = "code.update"
     language: str
@@ -132,7 +140,6 @@ ClientEvent = Annotated[
     | SessionPauseEvent
     | SessionResumeEvent
     | SessionEndEvent
-    | TranscriptFinalEvent
     | CodeUpdateEvent
     | ScreenRecordingStartedEvent
     | ScreenRecordingStoppedEvent
@@ -180,6 +187,12 @@ class TranscriptPartialEvent(BaseServerEvent):
     text: str
 
 
+class TranscriptFinalEvent(BaseServerEvent):
+    type: Literal["transcript.final"] = "transcript.final"
+    text: str
+    timestamp: float
+
+
 class RubricUpdatedEvent(BaseServerEvent):
     type: Literal["rubric.updated"] = "rubric.updated"
     rubric: dict[RubricCategory, int]
@@ -211,6 +224,7 @@ ServerEvent = Annotated[
     | InterviewerAudioStartEvent
     | InterviewerAudioEndEvent
     | TranscriptPartialEvent
+    | TranscriptFinalEvent
     | RubricUpdatedEvent
     | HintResponseEvent
     | ReviewReadyEvent

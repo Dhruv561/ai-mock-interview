@@ -205,6 +205,8 @@ Each subsystem below states responsibility, files, inputs/outputs, dependencies,
 - **Risks:** binary/text frame disambiguation is implicit — if this ever needs to carry two binary kinds in the same direction, revisit and add an explicit header. Not needed for MVP.
 - **Done when:** Feature 06 acceptance criteria in `FEATURE_PROGRESS.md` are met, including malformed-event rejection and reconnect.
 
+**Deliberate PRD deviation — transcript.partial/transcript.final direction:** PRD.md §9 lists both under "Client → backend events" and omits them from the server list entirely. That doesn't match this document's own §H, which was already clear that the *backend's STT provider* is what produces partial/final transcript segments from streamed mic audio — the client has no way to originate them itself once §E/§H's server-side-STT design is followed. Caught while implementing Feature 05 (the first feature to actually use these events); resolved by making both server → client, matching §H, not §G's original listing (which had copied the PRD's placement without checking it against §H). Documented here per CLAUDE.md's "do not silently change requirements" rule rather than fixed quietly.
+
 **Client → backend event catalogue** (Pydantic models in `backend/app/interview/schemas.py`, mirrored in `shared/events.ts`):
 
 ```text
@@ -212,13 +214,14 @@ session.start          { problem: ProblemInfo, language: str }
 session.pause
 session.resume         { session_id: str, last_seq: int }
 session.end
-transcript.final       { text: str, timestamp: float }   # partials are computed server-side from STT provider, see §H
 code.update             { language: str, code: str, timestamp: float }
 screen.recording.started
 screen.recording.stopped
 hint.requested
 dev.simulate_transcript { text: str }   # mock-mode only, rejected if USE_MOCK_PROVIDERS is false
 ```
+
+Binary frames (raw mic audio chunks, see §E) flow on this same connection once a session exists — they're not part of the typed JSON catalogue, see the framing convention above.
 
 **Backend → client event catalogue:**
 
@@ -229,6 +232,7 @@ interviewer.transcript   { text: str, seq: int }
 interviewer.audio.start  { format: str }        # followed by binary frames, then...
 interviewer.audio.end
 transcript.partial       { text: str }
+transcript.final          { text: str, timestamp: float }   # from the STT provider, see §H
 rubric.updated           { rubric: RubricState, evidence: Evidence }
 hint.response             { level: int, text: str }
 review.ready              { review: FinalReview }
