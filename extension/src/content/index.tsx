@@ -2,7 +2,8 @@ import { createRoot } from "react-dom/client";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import cssText from "../styles/globals.css?inline";
 import { App } from "./App";
-import { getCurrentSnapshot, watchCode } from "./editor";
+import { watchCode } from "./editor";
+import { cacheProblemInfo, hasActiveInterviewSession, resetInterviewSession } from "./interviewSession";
 import { releasePageSpace, reservePageSpace } from "./layout";
 import { isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
 
@@ -10,10 +11,6 @@ const HOST_ID = "ai-mock-interview-root";
 const LOG_PREFIX = "[ai-mock-interview]";
 
 let stopWatchingCode: (() => void) | null = null;
-// Set once session.start has been sent for the current problem page, so
-// watchCode's callback knows whether code.update has anywhere to go yet.
-// Reset on every SPA navigation (see the MutationObserver below).
-let sessionStarted = false;
 
 function mount() {
   if (!isSupportedProblemPage() || document.getElementById(HOST_ID)) return;
@@ -38,27 +35,20 @@ function mount() {
 
   const socket = getInterviewSocket();
 
-  // Extraction now feeds a real backend session (Feature 06) — the
-  // interview panel itself still runs on state/mockEngine.ts until
-  // Features 07/08 replace it with real server events; this transport and
-  // the mock UI are independent until then.
-  void waitForProblemInfo().then(async (problem) => {
+  // The real session.start now fires from InterviewPanel's Start button
+  // (see interviewSession.ts), not automatically here — this just caches
+  // the detected problem so that click has something to send.
+  void waitForProblemInfo().then((problem) => {
     if (!problem) {
       console.warn(`${LOG_PREFIX} could not extract problem info on this page`);
       return;
     }
     console.debug(`${LOG_PREFIX} problem detected`, problem);
-    const snapshot = await getCurrentSnapshot();
-    socket.send({
-      type: "session.start",
-      problem,
-      language: snapshot?.language ?? "plaintext",
-    });
-    sessionStarted = true;
+    cacheProblemInfo(problem);
   });
 
   stopWatchingCode = watchCode((snapshot) => {
-    if (!sessionStarted) {
+    if (!hasActiveInterviewSession()) {
       console.debug(`${LOG_PREFIX} meaningful code change (no session yet)`, {
         language: snapshot.language,
         length: snapshot.code.length,
@@ -90,7 +80,7 @@ let lastPath = window.location.pathname;
 new MutationObserver(() => {
   if (window.location.pathname === lastPath) return;
   lastPath = window.location.pathname;
-  sessionStarted = false;
+  resetInterviewSession();
   unmount();
   mount();
 }).observe(document.body, { childList: true, subtree: true });

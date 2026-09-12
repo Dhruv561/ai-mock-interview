@@ -1,12 +1,10 @@
+import { endInterviewSession, startInterviewSession } from "../content/interviewSession";
 import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
+import { useLiveInterviewEngine } from "../state/liveInterviewEngine";
 import { useInterview } from "../state/interviewStore";
-import {
-  buildMockReview,
-  nextMockHint,
-  useMockInterviewEngine,
-} from "../state/mockEngine";
+import { buildMockReview } from "../state/mockEngine";
 import { EndReviewButton } from "./EndReviewButton";
 import { HintButton } from "./HintButton";
 import { MicBadge } from "./MicBadge";
@@ -19,42 +17,35 @@ import { Transcript } from "./Transcript";
 const MAX_HINT_LEVEL = 3;
 
 /**
- * Top-level panel. Currently driven by state/mockEngine.ts (Feature 02 —
- * mocked data, no backend). A later phase replaces the mock engine's
- * dispatch calls with translated server events over the real WebSocket
- * (networking/websocket.ts) without changing this component or the
- * reducer/types beneath it. Mic capture (Feature 05) and the interview
- * stage (Feature 07) are both real and wired directly here, independent
- * of the mock engine — same pattern as the connection badge in App.tsx.
+ * Top-level panel. The transcript (interviewer questions, hints, candidate
+ * speech) is driven by real backend events via state/liveInterviewEngine.ts
+ * (Feature 08) — session.start now fires from handleStart below, not
+ * automatically on page load (see content/interviewSession.ts), so nothing
+ * the interviewer says can arrive before the candidate has actually
+ * started. The final review is still state/mockEngine.ts's hardcoded
+ * placeholder until Feature 14 exists.
  */
 export function InterviewPanel() {
   const { state, dispatch } = useInterview();
-  useMockInterviewEngine(state.status, dispatch);
   const socket = getInterviewSocket();
   const mic = useMicrophoneCapture(socket);
   const stage = useInterviewStage(socket);
+  useLiveInterviewEngine(socket, state.elapsedSeconds, dispatch);
 
   function handleStart() {
     dispatch({ type: "session/start" });
     void mic.start();
+    void startInterviewSession();
   }
 
   function handleHint() {
-    const hint = nextMockHint(state.hints.length);
-    dispatch({ type: "hint/add", hint });
-    dispatch({
-      type: "message/add",
-      message: {
-        id: `hint-${state.hints.length + 1}`,
-        speaker: "interviewer",
-        elapsedSeconds: state.elapsedSeconds,
-        text: `Hint (level ${hint.level}): ${hint.text}`,
-      },
-    });
+    socket.send({ type: "hint.requested" });
   }
 
   function handleEnd() {
     mic.stop();
+    socket.send({ type: "session.end" });
+    endInterviewSession();
     dispatch({ type: "session/end" });
     dispatch({
       type: "review/ready",
