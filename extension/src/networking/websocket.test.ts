@@ -209,6 +209,37 @@ describe("connectInterviewSocket", () => {
     expect(sockets[0].sentBinary[0]).toBe(header);
   });
 
+  it("discards audio buffered before a session when one starts", () => {
+    const { sockets, factory } = makeFactory();
+    const socket = connectInterviewSocket("ws://test", factory);
+    sockets[0].triggerOpen();
+
+    // Audio captured while no session ever materialised (e.g. the backend
+    // was down), which must not be delivered into a later session.
+    socket.sendAudioChunk(new Blob(["stale"]));
+
+    socket.send({ type: "session.start", problem: PROBLEM, language: "python" });
+    sockets[0].triggerMessage({ type: "session.started", seq: 1, session_id: "abc-123" });
+
+    expect(sockets[0].sentBinary).toHaveLength(0);
+  });
+
+  it("discards buffered audio when the session ends", () => {
+    const { sockets, factory } = makeFactory();
+    const socket = connectInterviewSocket("ws://test", factory);
+    sockets[0].triggerOpen();
+
+    // Buffered because no session is active yet.
+    socket.sendAudioChunk(new Blob(["captured"]));
+
+    // Ending the session must drop it, so it cannot later be flushed into
+    // a session the user considers separate.
+    socket.send({ type: "session.end" });
+    sockets[0].triggerMessage({ type: "session.started", seq: 1, session_id: "abc-123" });
+
+    expect(sockets[0].sentBinary).toHaveLength(0);
+  });
+
   it("does not reconnect after the caller explicitly closes the socket", () => {
     vi.useFakeTimers();
     try {

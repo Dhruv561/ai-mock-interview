@@ -278,7 +278,7 @@ None — feature complete.
 # Feature 05 — Microphone and speech-to-text
 
 ## Status
-VERIFIED
+DONE
 
 ## Priority
 P0
@@ -325,6 +325,16 @@ Complete except one manual check that needs a real Deepgram key + a machine wher
 - `npm run --workspace extension typecheck` / `lint` / `build` — all pass
 - Manual, live Chrome (`claude-in-chrome`, this session) against `leetcode.com/problems/add-two-numbers/description/` with a freshly reloaded extension build: clicked "Start AI Interview" → mic badge correctly shows "REQUESTING MIC…", `navigator.permissions.query({name:'microphone'})` confirmed the browser genuinely entered its native permission-prompt state (proving `getUserMedia` was actually called, not skipped), no console errors; clicked "End & review" *without* granting the permission first → review screen still rendered correctly (`mic.stop()` on a capture that never started is a safe no-op) — no regression, no crash
 
+## 2026-09-13 — real Deepgram verified live, plus a privacy defect found and fixed
+
+Real streaming STT now works end-to-end with a live `DEEPGRAM_API_KEY`: speech into the panel produced accurate `transcript.partial`/`transcript.final` events (5 finals, 6 partials, zero errors) and rendered as `candidate` messages. Three defects were found by this first live run — none of which any existing automated test could have caught:
+
+1. **Deepgram never received the WebM container header.** Mic capture starts on the Start click, but `sendAudioChunk` dropped chunks while `sessionId` was null — and `MediaRecorder` puts the EBML header in its *first* chunk only. Deepgram, unable to identify the container, closed the stream. Diagnosed from the backend log: hundreds of `43 c3 81 00` continuation clusters, not one `1a 45 df a3` header. Fixed by buffering chunks until the session opens (`networking/websocket.ts`), with trimming that never discards index 0.
+2. **A dead STT upstream killed the whole interview.** `send_audio` was unguarded, so Deepgram's close raised out of the ASGI handler, dropped the client socket, and the client's own resume re-entered the same failure — an infinite crash-reconnect loop. `architecture.md` §H requires graceful degradation; only *start* failure had been guarded. Now the STT session is torn down, the client is told `stt_unavailable`, and the interview continues.
+3. **PRIVACY — the mic kept recording after the panel was torn down.** See `architecture.md` §B.2 for the full record. Root cause was `content/index.tsx` removing the React host without calling `root.unmount()`, so no effect cleanup ran and the `MediaRecorder` outlived its owner. Fixed with layered defences and six regression tests; the unmount test was verified to fail against the pre-fix code.
+
+**Privacy verified empirically.** A three-phase live test (speak before Start / during / after End) was analysed by bucketing every inbound audio frame in log order: **0 frames before start, 96 frames (~24s) during, 0 frames after end**, with a 20s watch past `session.end` confirming the count held. Audio frames are the decisive measure because they are upstream of transcription — zero frames means no capture, not merely no transcript. Limit of the evidence: this proves nothing reached the *backend*; a recorder running with the socket closed would drop chunks client-side. The unit tests cover that gap.
+
 ## Verification
 VERIFIED, not DONE. The STT relay pipeline (binary frame → provider → typed transcript events) is verified for real against the mock provider via genuine ASGI-level WebSocket tests, same as Feature 06. What's not verified this session, for two separate reasons:
 1. Granting the actual mic permission and confirming real audio bytes flow requires a human clicking the native Chrome permission prompt — not something to force through browser automation (same category as the `chrome://extensions` limitation from Feature 02).
@@ -335,7 +345,7 @@ Next action for whoever picks this up: on a machine where the browser and backen
 
 **UPDATE 2026-09-13 — live audio path now verified end-to-end (status stays `VERIFIED`, not `DONE`).** With the CSP transport blocker fixed (Feature 06), real mic capture was confirmed reaching the live backend from the user's own Chrome: `MIC ON` in the panel, and the backend debug log showing a continuous stream of binary frames (~4846 bytes per 250ms chunk, first chunk carrying the WebM/EBML header `1a 45 df a3`, i.e. a genuine Opus/WebM container and not silence or a malformed buffer).
 Note this path changed shape since the original implementation: binary chunks now cross a `chrome.runtime` port base64-encoded before reaching the socket in the service worker (see `architecture.md` §B.1), so `sendAudioChunk` is no longer a direct `ws.send(blob)`. That relay is what was verified above.
-**Still blocking `DONE`:** no `DEEPGRAM_API_KEY`, so the real STT provider remains unexercised — audio is confirmed to *arrive*, but nothing has transcribed it. `MockSTTProvider` deliberately does not fabricate text, so no transcript appears in mock mode; use `dev.simulate_transcript` to exercise downstream consumers.
+**Superseded 2026-09-13:** a real `DEEPGRAM_API_KEY` was supplied and the real provider is now verified live — see the section above. This feature is `DONE`.
 ## Known issues/blockers
 - Same WS-endpoint auth/origin gap already tracked under Feature 06 — applies here too since audio flows over the same connection.
 - The one live mic+Deepgram check described above, blocked by tooling/no-key, not a known code defect.

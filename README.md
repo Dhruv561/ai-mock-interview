@@ -57,7 +57,7 @@ docs/        Design reference and supporting docs
 Prerequisites: Node 20+, Python 3.11+, [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-cp .env.example .env
+cp .env.example backend/.env     # NOTE: backend/, not the repo root — see below
 npm install --legacy-peer-deps   # see note below
 (cd backend && uv sync)
 ./scripts/dev.sh   # runs backend (uv) + extension dev build (npm) concurrently
@@ -65,15 +65,27 @@ npm install --legacy-peer-deps   # see note below
 
 `--legacy-peer-deps` is currently required: `npm install` otherwise hits a known npm/arborist resolver crash on vitest's optional browser-mode peer packages. Not specific to any version choice made here — see `progress.md`'s decisions log.
 
-By default `USE_MOCK_PROVIDERS=true`, so the entire happy path runs with **no API keys at all** once the backend's mock providers land in later phases. See `architecture.md` §S.
+**The env file must live at `backend/.env`, not the repo root.** `scripts/dev.sh` starts the backend with `cd backend`, and pydantic-settings resolves `env_file=".env"` against the process working directory — so a root-level `.env` is silently ignored and every key in it appears unset. Verified empirically; easy to lose an hour to.
 
-To load the extension in Chrome: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist` (run `npm run --workspace extension build` first, or use `npm run --workspace extension dev` for a watch build). The panel currently runs a fully scripted mock interview (Feature 02) — no backend connection yet.
+By default `USE_MOCK_PROVIDERS=true`, so the entire happy path runs with **no API keys at all**. Two things to know when you do add a key:
+
+- `USE_MOCK_PROVIDERS=true` overrides **every** key, so adding one changes nothing until you also set it to `false`.
+- Each provider then falls back to its own mock independently (`if use_mock_providers or not <key>`), so setting only `DEEPGRAM_API_KEY` gives you real speech-to-text while the interviewer LLM stays mocked. You don't have to enable everything at once.
+- `get_settings()` is `@lru_cache`d, so a changed key needs a real backend restart — uvicorn's `--reload` will not pick it up.
+
+See `architecture.md` §S.
+
+To load the extension in Chrome: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist` (run `npm run --workspace extension build` first, or use `npm run --workspace extension dev` for a watch build). Reload the extension from that page after any rebuild — a manifest or service-worker change in particular does not hot-reload.
+
+The panel connects to a live local backend: start the backend, open a LeetCode problem, click **Start AI Interview**, and the header badge should reach `BACKEND CONNECTED`.
 
 To run all checks (lint/typecheck/test/build, both projects): `./scripts/check.sh`.
 
 ## Environment variables
 
 See `.env.example` for the full list, documented in `architecture.md` §U. Provider secrets (Anthropic, Deepgram, ElevenLabs, Supabase) are backend-only and are never bundled into the extension.
+
+`.env` and `.env.*` are gitignored at any depth (with `.env.example` excepted), so `backend/.env` cannot be committed. The test suite forces mock providers via `backend/tests/conftest.py` — without that, a real key in `backend/.env` makes the suite open billable connections to live third-party APIs.
 
 ## Contributing / workflow
 

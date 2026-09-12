@@ -155,6 +155,15 @@ export function connectInterviewSocket(
       // Fail fast on a contract mismatch instead of sending something the
       // backend will reject anyway.
       clientEventSchema.parse(event);
+      // Buffered audio belongs to exactly one session. Discard it at both
+      // session boundaries so audio captured in one window can never be
+      // flushed into another — without this, chunks held while a session
+      // failed to start (backend down, say) would later be delivered into
+      // the *next* session, sending the user audio from a window they
+      // believe is over. Privacy invariant, see architecture.md §B.2.
+      if (event.type === "session.start" || event.type === "session.end") {
+        pendingAudio = [];
+      }
       rawSend(event);
     },
     sendAudioChunk(chunk) {
@@ -183,6 +192,7 @@ export function connectInterviewSocket(
     close() {
       closedByCaller = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      pendingAudio = []; // never hold captured audio past teardown
       ws?.close();
       setState("closed");
     },

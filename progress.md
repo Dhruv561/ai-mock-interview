@@ -4,11 +4,13 @@ High-level project dashboard. Update after every meaningful work slice, per `CLA
 
 ---
 
-## Status: transport blocker RESOLVED — stack runs end-to-end live for the first time
+## Status: live end-to-end with real speech-to-text; privacy defect found and fixed
 
 Last updated: 2026-09-13
 
-> **The blocker is gone.** The extension now connects to a live backend from a real browser and the whole stack has run end-to-end: `BACKEND CONNECTED`, a real hint round trip rendered in the panel, real mic audio reaching the server, and a clean session lifecycle through to stage `review`. Root cause was **leetcode.com's CSP** (`default-src 'none'; connect-src 'self' …`) blocking any *page-context* connection to the local backend — not the IPv4/IPv6 issue and not host permissions, though both of those were real and both fixes are retained. Fixed by moving the WebSocket into the background service worker behind a `chrome.runtime` port relay, which reverses `architecture.md` §B and is documented as a forced correction in new **§B.1**. Next session starts on **Phase 7 (ElevenLabs TTS)** with a working stack underneath it.
+> **The stack runs for real.** Transport blocker resolved (leetcode.com's CSP — the WebSocket moved into the service worker, `architecture.md` §B.1), and real Deepgram transcription is now verified live: speech appears in the panel as `candidate` messages. Features 05 and 06 are both `DONE`.
+>
+> **A privacy defect was found by live testing and fixed:** the microphone kept recording after the panel was torn down on SPA navigation, while the UI read `NOT STARTED`. Root cause was React never being unmounted. Fixed with layered defences and regression tests (`architecture.md` §B.2), then **verified empirically** — a three-phase test (speak before Start / during / after End) showed 0 audio frames before, 96 during, 0 after. Next session starts on **Phase 7 (ElevenLabs TTS)**.
 
 ## Current phase
 
@@ -65,9 +67,16 @@ TODO.md's Phase 6 scope was backend-only, and the extension's transcript panel w
   - Accepted cost: ports are JSON-only, so mic chunks are base64'd across (~33% overhead on ~4.8KB every 250ms). Verified working live rather than assumed.
   - Diagnosis method worth reusing: Chrome's own error was unreachable (the console tool doesn't surface content-script messages — hit in two consecutive sessions) and every in-page probe is confounded because page CSP is evaluated first. Making the *backend* the observer (`uvicorn --log-level debug`, "did any attempt arrive?") split client-block from server-reject in one shot; a service-worker probe then isolated the variable.
 
+- **Real STT + privacy hardening (2026-09-13):**
+  - First live run against a real `DEEPGRAM_API_KEY` produced accurate transcripts (5 finals, 6 partials, zero errors) and surfaced three defects no automated test could have caught — a missing WebM container header (chunks were dropped before the session existed, and only chunk #1 carries the header), an unguarded STT send that turned a Deepgram close into an infinite crash-reconnect loop, and the microphone privacy defect below.
+  - **PRIVACY:** the mic outlived the panel because `content/index.tsx` removed the React host without calling `root.unmount()`, so no effect cleanup ran. Fixed at the root plus five further layers of defence, since the failure is silent — no error, no log, just a live mic with no indicator. Recorded in `architecture.md` §B.2, which teardown paths must re-check.
+  - Audio buffered before a session is now discarded at both session boundaries and on socket close, so audio captured in one window can never be flushed into another.
+  - `backend/tests/conftest.py` forces mock providers: `Settings` reads `backend/.env` and pytest runs from `backend/`, so a real key made three tests open billable connections to the live API.
+  - Every regression test in this batch was verified to **fail** against the pre-fix code — a guardrail that cannot fail is not a guardrail.
+
 ## In progress
 
-Nothing blocking. The stack is live end-to-end. Two features remain `VERIFIED` rather than `DONE` purely for want of API keys, not code: Feature 05 needs a real `DEEPGRAM_API_KEY` (audio is confirmed *arriving* at the backend, but nothing has transcribed it — `MockSTTProvider` deliberately doesn't fabricate text, so use `dev.simulate_transcript` to exercise downstream consumers meanwhile), and Feature 08 needs a real `ANTHROPIC_API_KEY` (the interviewer loop is proven through `MockLLMProvider`, but the real provider's forced tool-use path is unexercised).
+Nothing blocking. Feature 08 remains `VERIFIED` rather than `DONE` only for want of an `ANTHROPIC_API_KEY` — the interviewer loop is proven live through `MockLLMProvider`, but `AnthropicLLMProvider`'s forced tool-use path is unexercised against the real API.
 
 ## Next
 
