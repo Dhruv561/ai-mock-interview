@@ -1,0 +1,35 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+build/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Test / coverage
+coverage/
+.pytest_cache/
+
+# Temporary files
+tmp/
+temp/
+
+# Generated recordings
+recordings/
