@@ -4,11 +4,11 @@ High-level project dashboard. Update after every meaningful work slice, per `CLA
 
 ---
 
-## Status: Phase 6 done, but BLOCKED on a live-connection bug — start there next session
+## Status: transport blocker RESOLVED — stack runs end-to-end live for the first time
 
 Last updated: 2026-09-13
 
-> **⚠ Top priority next session:** the extension has never successfully connected to a live backend from a real browser. Everything above the transport is built and passing automated tests, but the stack has not run end-to-end once. Full diagnostic write-up — confirmed facts, what's ruled out, the applied-but-unverified fix, and ordered next hypotheses — is in `architecture.md` §4 under "OPEN BUG", mirrored in `FEATURE_PROGRESS.md` Feature 06. **Read that first; don't re-derive it.** Quickest thing to try: reload the rebuilt extension and retest — the IPv4 fix applied at the end of the session was never verified against a reloaded build.
+> **The blocker is gone.** The extension now connects to a live backend from a real browser and the whole stack has run end-to-end: `BACKEND CONNECTED`, a real hint round trip rendered in the panel, real mic audio reaching the server, and a clean session lifecycle through to stage `review`. Root cause was **leetcode.com's CSP** (`default-src 'none'; connect-src 'self' …`) blocking any *page-context* connection to the local backend — not the IPv4/IPv6 issue and not host permissions, though both of those were real and both fixes are retained. Fixed by moving the WebSocket into the background service worker behind a `chrome.runtime` port relay, which reverses `architecture.md` §B and is documented as a forced correction in new **§B.1**. Next session starts on **Phase 7 (ElevenLabs TTS)** with a working stack underneath it.
 
 ## Current phase
 
@@ -58,26 +58,31 @@ TODO.md's Phase 6 scope was backend-only, and the extension's transcript panel w
   - `InterviewPanel.tsx` — Hint button now sends real `hint.requested`; End sends `session.end`. Review screen's strengths/areas/timeline intentionally left as `mockEngine.ts`'s old placeholder (Feature 14's job) — a visible, documented inconsistency rather than a silently patched one.
   - 12 new tests (`interviewSession.test.ts`, `liveInterviewEngine.test.ts`); live Chrome regression: Start → hint → End & review → Restart, clean throughout, rubric now honestly all-zero instead of the old scripted partial numbers.
 
+- **Transport fix (2026-09-13) — service-worker WebSocket relay:**
+  - `extension/src/networking/portSocket.ts` (new) — a `WebSocketLike` that proxies to the service worker over a `chrome.runtime` port. Drops into the `WebSocketFactory` seam that already existed for tests, so `networking/websocket.ts` (reconnect/backoff/resume state machine) is completely untouched and its 7 unit tests still pass unmodified.
+  - `extension/src/background/index.ts` — no longer a stub; owns the real WebSocket and relays frames both directions. Holds **no session state**, honouring §B's original eviction concern: when the worker is evicted the port drops, the content script sees an ordinary `close`, and its existing backoff opens a fresh port which wakes the worker and replays `session.resume`.
+  - `extension/src/manifest.ts` — `http://127.0.0.1:8000/*` + `http://localhost:8000/*` host permissions. Necessary (the worker's socket needs them) but *not* the fix; confirmed granted and active while the content script still failed.
+  - Accepted cost: ports are JSON-only, so mic chunks are base64'd across (~33% overhead on ~4.8KB every 250ms). Verified working live rather than assumed.
+  - Diagnosis method worth reusing: Chrome's own error was unreachable (the console tool doesn't surface content-script messages — hit in two consecutive sessions) and every in-page probe is confounded because page CSP is evaluated first. Making the *backend* the observer (`uvicorn --log-level debug`, "did any attempt arrive?") split client-block from server-reject in one shot; a service-worker probe then isolated the variable.
+
 ## In progress
 
-Nothing actively blocking. Four features (05, 06, 07, 08) share one optional follow-up: a genuine browser↔live-backend round trip couldn't be exercised this session because the automated Chrome instance couldn't reach this session's `localhost:8000` at all (network-isolation between the two, not a code issue — see `architecture.md` §4). Feature 05 additionally needs a real `DEEPGRAM_API_KEY`, and Feature 08 a real `ANTHROPIC_API_KEY`, to test their non-mock paths (mic permission itself is no longer a gap). Worth doing together next session: run the backend, open a LeetCode problem, click Start, confirm the header badge reaches "BACKEND CONNECTED" and the stage badge shows a real stage, and exercise `dev.simulate_transcript`/real speech/a hint request to see them actually appear in the transcript panel.
+Nothing blocking. The stack is live end-to-end. Two features remain `VERIFIED` rather than `DONE` purely for want of API keys, not code: Feature 05 needs a real `DEEPGRAM_API_KEY` (audio is confirmed *arriving* at the backend, but nothing has transcribed it — `MockSTTProvider` deliberately doesn't fabricate text, so use `dev.simulate_transcript` to exercise downstream consumers meanwhile), and Feature 08 needs a real `ANTHROPIC_API_KEY` (the interviewer loop is proven through `MockLLMProvider`, but the real provider's forced tool-use path is unexercised).
 
 ## Next
 
-**1. Fix the live-connection bug (blocking — see the banner at the top of this file).** Until the extension can actually reach a running backend from a real browser, none of Features 05-08 can be confirmed working outside their automated tests, and no demo is possible. Everything else waits behind this.
+**Phase 7 (Feature 10) — ElevenLabs TTS.** Server-side ElevenLabs integration, streaming synthesized audio back over the WS connection for `interviewer.transcript`/`hint.response` text, plus candidate mute control. Per `TODO.md`. Note the return path now terminates in the service worker, so audio coming *back* has to cross the same `chrome.runtime` port — binary the other direction, which `portSocket.ts` does not yet handle (it only forwards text frames worker→content script, since the backend previously only sent JSON). That is the first thing Phase 7 will need to extend; see `architecture.md` §B.1.
 
-**2. Then** Phase 7 (Feature 10) — ElevenLabs TTS: server-side ElevenLabs integration, streaming synthesized audio back over the WS connection for `interviewer.transcript`/`hint.response` text, candidate mute control. Per `TODO.md`.
-
-See `TODO.md` for the full granular breakdown and `FEATURE_PROGRESS.md` for the authoritative per-feature checkpoint records.
+Worth doing whenever keys become available: exercise the real Deepgram and Anthropic providers, which would let Features 05 and 08 flip to `DONE`.
 
 ## Known issues / blockers
 
 - `npm install` at the workspace root requires `--legacy-peer-deps` — a known npm/arborist resolver crash (`Cannot read properties of null (reading 'edgesOut')`) triggered by vitest's optional browser-mode peer packages, unrelated to any version choice made here. Anyone re-running install from a clean checkout needs the same flag; called out in `README.md` and `FEATURE_PROGRESS.md` Feature 01.
-- No external API keys configured — not needed until Phase 7 (TTS); STT (Deepgram) and the interviewer LLM (Anthropic) are now both implemented behind their provider interfaces but unverified without real keys — mock providers cover the happy path until then (`architecture.md` §S).
-- This session's browser console-log tool didn't reliably capture repeated content-script-origin messages (see `FEATURE_PROGRESS.md` Feature 04's Verification note) — not a product issue, but worth knowing before relying on it for the next phase's live testing; direct DOM-state inspection via the JS-exec tool was the reliable fallback.
-- This session's `claude-in-chrome` automated browser could not reach `localhost:8000`/`127.0.0.1:8000` at all (a plain `fetch` timed out) even while this session's own shell could `curl` the same backend successfully — that automated browser is on a different host/network namespace. Blocks a true live browser↔backend round trip for WS-dependent features (06 onward) *from that tool*; see `architecture.md` §4 and `FEATURE_PROGRESS.md` Feature 06 for the workaround (automated ASGI-level backend tests + simulated-socket extension tests).
-- **BLOCKING: the extension can't connect to a live backend from the user's real browser either** — separate from the automated-browser constraint above, and a real product bug rather than a tooling artifact. Confirmed root cause so far: `localhost` resolves to IPv6 `::1` first on macOS while `uvicorn --host 0.0.0.0` binds IPv4 only, so Chrome's WebSocket connects to a dead address (`curl` hides this via its own IPv4 fallback). Extension default URL changed to `ws://127.0.0.1:8000/...` in response, **but that fix is unverified** — the user's failing console screenshot still showed the old `localhost` URL, so it may predate reloading the rebuilt extension. Ruled out: missing `.env` (optional, defaults verified), backend down (healthy throughout), CSP, mixed content. Full diagnostic state and ordered next hypotheses in `architecture.md` §4 "OPEN BUG".
-- A `uvicorn` process was left running on port 8000 from this session's debugging (started by Claude, not by the user). Stop it with `pkill -f "uvicorn app.main:app"` if it's in the way.
+- No external API keys configured. STT (Deepgram), interviewer LLM (Anthropic) and — from Phase 7 — TTS (ElevenLabs) are all implemented behind provider interfaces but unverified without real keys; mock providers cover the happy path (`architecture.md` §S).
+- **The browser console tool does not reliably surface content-script-origin messages.** Hit in two consecutive sessions, and it actively cost time during the transport diagnosis — Chrome's own `WebSocket connection failed` / CSP error was never readable through it. When debugging extension networking, instrument the *backend* or use a service-worker probe instead of trusting console capture.
+- ~~Extension can't connect to a live backend~~ — **RESOLVED 2026-09-13**, see the banner at the top. Both earlier partial fixes (the `127.0.0.1` pin and the backend host permissions) are retained deliberately; neither was the root cause but both were real and are still required.
+- ~~`claude-in-chrome` can't reach `localhost:8000`~~ — did not reproduce this session; the automated browser reached the backend fine and was used for the full live verification.
+- A `uvicorn` process with debug logging is running on port 8000 from this session (started by Claude, logging to the session scratchpad). Stop it with `pkill -f "uvicorn app.main:app"` if it's in the way.
 
 ## Decisions log (Phase 1 additions)
 
@@ -159,3 +164,10 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 | 14 | End interview and review | PLANNED | P0 |
 | 15 | Persistence | PLANNED | P1 |
 | 16 | Integration hardening and demo readiness | PLANNED | P0 |
+
+## Decisions log (Phase 6 addendum / transport fix)
+
+| Date | Decision | Why |
+|---|---|---|
+| 2026-09-13 | The background service worker owns the WebSocket; the content script talks to it over a `chrome.runtime` port — **reverses** `architecture.md` §B's "content script owns the WS connection" | Forced, not preferred: leetcode.com's `default-src 'none'; connect-src 'self' https://challenges.cloudflare.com` CSP blocks any page-context connection to the local backend, verified by zero inbound attempts reaching a debug-logging backend during a full page load, while a service-worker probe connected first try from the same build. §B's original eviction concern is preserved by keeping all session state in the content script and making the worker a stateless pipe. Full record in `architecture.md` §B.1 |
+| 2026-09-13 | Mic audio is base64-encoded across the runtime port rather than moving capture into an offscreen document | `chrome.runtime` ports are JSON-only. ~33% overhead on a ~4.8KB chunk every 250ms is acceptable and was verified working live; an offscreen document is a larger change that shouldn't be made speculatively. Documented as the escape hatch if it ever bites |

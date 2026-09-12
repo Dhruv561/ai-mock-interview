@@ -38,5 +38,18 @@ export default defineManifest({
     },
   ],
   permissions: ["scripting", "storage"],
-  host_permissions: ["https://leetcode.com/*"],
+  // The local backend must be declared here, not just leetcode.com.
+  // leetcode.com serves `default-src 'none'; connect-src 'self'
+  // https://challenges.cloudflare.com`, which blocks any connection to
+  // 127.0.0.1. A content script's fetch/WebSocket is exempt from the host
+  // page's CSP *only* when the extension holds host permission for the
+  // target origin; without it Chrome treats the request as page-context and
+  // the page CSP kills it. Match patterns have no ws:// scheme — Chrome
+  // checks ws:// against the http:// permission (and wss:// against
+  // https://), so the http entry is what authorises the WebSocket.
+  host_permissions: [
+    "https://leetcode.com/*",
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*",
+  ],
 });

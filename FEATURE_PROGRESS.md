@@ -332,6 +332,10 @@ VERIFIED, not DONE. The STT relay pipeline (binary frame → provider → typed 
 Both are tooling/environment constraints, not known code defects — the mock-mode path (`dev.simulate_transcript`) proves the entire event-flow half of the pipeline works; only "real audio, real provider" is unverified.
 Next action for whoever picks this up: on a machine where the browser and backend share a network, with `DEEPGRAM_API_KEY` set and `USE_MOCK_PROVIDERS=false`, click Start, grant the mic permission, speak, and confirm `transcript.partial`/`transcript.final` events arrive — if they do, flip this and Feature 06 to `DONE` together.
 
+
+**UPDATE 2026-09-13 — live audio path now verified end-to-end (status stays `VERIFIED`, not `DONE`).** With the CSP transport blocker fixed (Feature 06), real mic capture was confirmed reaching the live backend from the user's own Chrome: `MIC ON` in the panel, and the backend debug log showing a continuous stream of binary frames (~4846 bytes per 250ms chunk, first chunk carrying the WebM/EBML header `1a 45 df a3`, i.e. a genuine Opus/WebM container and not silence or a malformed buffer).
+Note this path changed shape since the original implementation: binary chunks now cross a `chrome.runtime` port base64-encoded before reaching the socket in the service worker (see `architecture.md` §B.1), so `sendAudioChunk` is no longer a direct `ws.send(blob)`. That relay is what was verified above.
+**Still blocking `DONE`:** no `DEEPGRAM_API_KEY`, so the real STT provider remains unexercised — audio is confirmed to *arrive*, but nothing has transcribed it. `MockSTTProvider` deliberately does not fabricate text, so no transcript appears in mock mode; use `dev.simulate_transcript` to exercise downstream consumers.
 ## Known issues/blockers
 - Same WS-endpoint auth/origin gap already tracked under Feature 06 — applies here too since audio flows over the same connection.
 - The one live mic+Deepgram check described above, blocked by tooling/no-key, not a known code defect.
@@ -344,7 +348,7 @@ Optional live check described above, then flip to `DONE` (alongside Feature 06).
 # Feature 06 — Interview WebSocket session
 
 ## Status
-VERIFIED
+DONE
 
 ## Priority
 P0
@@ -353,7 +357,7 @@ P0
 2026-09-12
 
 ## Current task
-Complete except one live-in-a-real-browser-against-a-real-backend check, blocked by a tooling constraint this session (see Verification below), not a known code defect.
+None — complete. The live browser-to-backend round trip that was outstanding is now done and passing (2026-09-13).
 
 ## Acceptance criteria
 - [x] session can start
@@ -375,7 +379,7 @@ Complete except one live-in-a-real-browser-against-a-real-backend check, blocked
 - Also discovered and fixed a real schema bug while wiring this up (not initially caught in planning): `content/leetcode.ts`'s `ProblemInfo.number`/`difficulty` are nullable (best-effort extraction), but the WS schemas had them required — fixed in both `backend/app/interview/schemas.py` and `shared/events.ts` to match reality.
 
 ## Remaining
-- One live check (see Verification) — not required to consider this feature usable, but worth doing once on a machine where the browser and backend share a network before fully closing this out.
+- Nothing. The last outstanding item (a live extension-in-a-real-browser round trip against a running backend) was completed 2026-09-13; see Verification.
 
 ## Files changed
 - `backend/app/interview/schemas.py`, `backend/app/websocket/interview.py`, `backend/app/main.py`, `backend/tests/test_websocket_interview.py`, `backend/tests/test_event_fixtures.py`
@@ -390,16 +394,22 @@ Complete except one live-in-a-real-browser-against-a-real-backend check, blocked
 
 ## Verification
 VERIFIED, not DONE. The WS protocol itself (session start, typed event validation, malformed-event rejection, resume/replay) is verified for real — `backend/tests/test_websocket_interview.py` drives Starlette's actual ASGI WebSocket implementation via `TestClient.websocket_connect`, not a mock. The extension client's reconnect/backoff/resume state machine is verified for real against a fake-but-behaviorally-accurate socket. What is **not** verified this session is an actual extension-in-a-real-browser round trip against a **live** backend process: this session's `claude-in-chrome` browser could not reach `localhost:8000` or `127.0.0.1:8000` at all — a plain `fetch('http://localhost:8000/health')` from that browser timed out, even though `curl localhost:8000/health` succeeded from this session's own shell at the same time. The two are evidently on different hosts/network namespaces; this is a tooling/environment constraint (documented in `architecture.md` §4, alongside the earlier `chrome://extensions` automation and console-log-capture limitations from Feature 02/04), not a code defect. Given that constraint, live verification was limited to confirming the badge/panel render correctly and don't regress anything.
-Next action for whoever picks this up: run `uv run uvicorn app.main:app` and load the unpacked extension in the *same* machine's Chrome, open a LeetCode problem, and confirm the header badge reaches "BACKEND CONNECTED" — if it does, flip this to `DONE`.
+**UPDATE 2026-09-13 — now fully verified live, flipped to `DONE`.** The outstanding round trip was completed against the user's own Chrome and a real local backend, after fixing the CSP blocker recorded under Known issues. Observed directly:
+- Panel header badge reaches **`BACKEND CONNECTED`** (green) on page load.
+- Backend debug log confirms the handshake server-side: `origin: chrome-extension://<id>`, `"WebSocket /ws/interview" [accepted]`, `101 Switching Protocols`, `connection open`.
+- Full lifecycle over the live socket: `session.start` (931-byte frame carrying real extracted problem info + language) → `session.started` → `interviewer.state` stage `intro` → `hint.requested` → `hint.response` **rendered in the transcript panel** ("Hint (level 1): Think about what data structure would give you faster lookups...") → `session.end` → `interviewer.state` stage `review`.
+- Binary mic frames flowing throughout (~4846 bytes per 250ms chunk, first chunk carrying the WebM/EBML header `1a 45 df a3`), confirming the base64-over-port audio relay works — this was the one genuinely new cost of the service-worker design and it is no longer unverified.
+- `StageBadge` showed `STAGE: INTRO` driven by real server state, and `MicBadge` showed `MIC ON` from real capture.
 
 ## Known issues/blockers
 - No origin/auth check on the WS endpoint — anyone who can reach the backend port can open a session. Fine for local-only hackathon use (`ALLOWED_ORIGINS` already documents the intended origin allowlist for later), explicitly deferred to Feature 16 hardening, not silently forgotten.
-- **OPEN, UNRESOLVED (2026-09-13) — the extension cannot connect to a live backend from a real browser.** First attempted against the user's own Chrome + a real local backend; the panel sat on "RECONNECTING…" indefinitely and DevTools showed repeated `WebSocket connection to 'ws://localhost:8000/ws/interview' failed:`. This is now the project's top blocker — every layer above this transport is built and green in automated tests, but the stack has never run end-to-end live. Full diagnostic state (confirmed facts, what's been ruled out, applied-but-unverified fix, and the ordered list of untested hypotheses) is written up in `architecture.md` §4 under "OPEN BUG" — **read that before touching anything**, it will save re-deriving an hour of diagnosis.
-  - Short version: `localhost` resolves to IPv6 `::1` first on macOS but `uvicorn --host 0.0.0.0` binds IPv4 only, so Chrome's WebSocket hit a dead address. The extension's default URL was changed to `ws://127.0.0.1:8000/...` and verified in the built bundle, but **that fix is unverified** — the user's failing console screenshot still showed the old `localhost` URL, so it may predate reloading the rebuilt extension. Retest that first.
-  - Ruled out: missing `.env` (both optional, defaults verified correct), backend not running (healthy throughout), CSP, mixed content.
+- **RESOLVED 2026-09-13 — the extension could not connect to a live backend from a real browser.** Root cause was **not** the IPv4/IPv6 issue and **not** a missing host permission, though both were real and both fixes are retained. leetcode.com serves `content-security-policy: default-src 'none'; connect-src 'self' https://challenges.cloudflare.com`, which blocks *any* page-context connection to `127.0.0.1` — so no content-script WebSocket could ever reach the backend, regardless of address or permissions.
+  - **Fix:** the WebSocket moved into the background service worker, relayed to the content script over a `chrome.runtime` port (`extension/src/networking/portSocket.ts` + `extension/src/background/index.ts`). This reverses `architecture.md` §B's original "content script owns the WS connection" decision — recorded as a forced correction in new **§B.1**, with the evidence and the accepted costs.
+  - **Evidence that settled it:** with `uvicorn --log-level debug`, a full page load produced *zero* inbound connection attempts (so the block was inside Chrome, not a server reject), while a temporary probe in the service worker — same build, same moment — connected first try with `origin: chrome-extension://<id>`, `101 Switching Protocols`, `connection open`.
+  - Host permission `http://127.0.0.1:8000/*` was confirmed granted/active in Chrome's own `Secure Preferences` while the content script still failed, proving it necessary but not sufficient. Kept, because the service worker's socket needs it.
 
 ## Next action
-**Start here next session.** Resolve the open live-connection bug above (details in `architecture.md` §4): reload the rebuilt extension and retest first, since the IPv4 fix may already have resolved it. If it still fails, work the hypothesis list — host permissions, then Private Network Access. Only once the badge reaches "BACKEND CONNECTED" and a real interviewer reply lands in the panel can this feature (and 05/07/08's live checks) flip to `DONE`.
+None for this feature — it is `DONE`. The transport is live and proven end-to-end. Remaining WS-endpoint hardening (origin/auth check) stays deferred to Feature 16 as already recorded above.
 
 ---
 
@@ -514,6 +524,9 @@ After this feature landed, the user asked directly why their spoken/typed input 
 ## Verification
 VERIFIED, not DONE. The full pipeline — state → prompt → mock provider → controller → typed WS event — is verified for real via genuine ASGI-level WebSocket integration tests, not mocked at the wire level, same rigor as every other feature this project. What's not verified: an actual call to the real Anthropic API, which needs a key not available in this environment, and which is also the only way to honestly assess "contextually relevant" in the sense architecture.md §J's "Done when" means (referencing the *literal* current code/transcript content, not just picking the right canned line for the stage). This is the same category of gap as Feature 05's Deepgram provider — implemented against the documented API, structurally sound, unverified live. The extension-side wiring is verified by unit tests plus a live regression pass; seeing an actual interviewer reply land in the panel needs the same live-backend-reachability a real session requires (architecture.md §4) — not exercised this session for the same reason as every other live-backend check so far.
 
+
+**UPDATE 2026-09-13 — interviewer loop now verified live end-to-end through the mock provider (status stays `VERIFIED`, not `DONE`).** With the CSP transport blocker fixed (Feature 06), a real hint request from the panel in the user's own Chrome travelled the full path — content script → `chrome.runtime` port → service worker → live WebSocket → session → `InterviewState` → `InterviewController` gate → interviewer agent → `MockLLMProvider` → `hint.response` → back to the panel — and rendered in the transcript as "Hint (level 1): Think about what data structure would give you faster lookups than scanning the list each time." Backend log confirms exactly one `hint.requested` in and one `hint.response` out, so the controller accepted the proposal and incremented `hint_level` once, as designed.
+**Still blocking `DONE`:** no `ANTHROPIC_API_KEY`, so `AnthropicLLMProvider` and its forced tool-use structured output remain unexercised against the real API. The controller's gating rules (cooldown, duplicate rejection, hint cap, candidate-speaking gate) are covered by unit tests but have not been observed under real conversational load.
 ## Known issues/blockers
 - The one real-Anthropic-API check described above.
 - The Review screen's strengths/areas-to-improve/timeline are still `mockEngine.ts`'s hardcoded placeholder and may not match the now-real transcript above it — explicitly Feature 14's job, flagged in `mockEngine.ts`'s comment rather than silently left inconsistent.

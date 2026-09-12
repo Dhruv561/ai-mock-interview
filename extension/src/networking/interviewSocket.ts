@@ -3,6 +3,7 @@
 // (React) share exactly one WebSocket connection per content-script
 // instance, instead of each opening their own.
 import { connectInterviewSocket, type InterviewSocket } from "./websocket";
+import { portSocketFactory } from "./portSocket";
 
 // 127.0.0.1, not "localhost", on purpose: "localhost" resolves to IPv6
 // ::1 first on macOS, while `uvicorn --host 0.0.0.0` binds IPv4 only — so
@@ -16,6 +17,12 @@ const DEFAULT_BACKEND_WS_URL = "ws://127.0.0.1:8000/ws/interview";
 let singleton: InterviewSocket | null = null;
 
 export function getInterviewSocket(): InterviewSocket {
-  singleton ??= connectInterviewSocket(import.meta.env.VITE_BACKEND_WS_URL || DEFAULT_BACKEND_WS_URL);
+  // portSocketFactory, not a direct `new WebSocket`: the socket has to be
+  // opened from the service worker, because leetcode.com's CSP blocks a
+  // page-context connection to the backend outright. See portSocket.ts.
+  singleton ??= connectInterviewSocket(
+    import.meta.env.VITE_BACKEND_WS_URL || DEFAULT_BACKEND_WS_URL,
+    portSocketFactory,
+  );
   return singleton;
 }
