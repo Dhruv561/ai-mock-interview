@@ -112,7 +112,7 @@ None — feature complete.
 # Feature 02 — Interview overlay UI
 
 ## Status
-IMPLEMENTED
+DONE
 
 ## Priority
 P0
@@ -121,7 +121,7 @@ P0
 2026-09-12
 
 ## Current task
-Manual verification in real Chrome against a real LeetCode problem page (blocked this session — see Known issues/blockers).
+Complete.
 
 ## Acceptance criteria
 - [x] panel renders on the coding page (content script mounts into a shadow root on `leetcode.com/problems/*`, gated to that path)
@@ -129,41 +129,47 @@ Manual verification in real Chrome against a real LeetCode problem page (blocked
 - [x] timer renders (elapsed mm:ss, ticks live while recording)
 - [x] interviewer message is visually prominent (`Transcript` renders the latest interviewer message in its own bordered/shadowed card labelled "NOW", separate from plain history)
 - [x] transcript renders
-- [x] rubric renders (all 6 FR13 categories, proportional bars)
+- [x] rubric renders — **on the Review screen only**, not live (deliberate PRD deviation, see below), all 6 FR13 categories, proportional bars
 - [x] Ask for a hint button works in mock mode (tiered mock hints, level 1→3, caps at 3)
 - [x] End & review button works in mock mode (renders full scorecard: overall score, rubric breakdown, strengths, areas to improve, timeline)
 - [x] responsive behaviour is reasonable (fixed 420px right-hand panel, internal flex/overflow scroll on the transcript)
-- [x] styling follows `docs/ui-reference.png` (off-white/sage panel, thin borders, dark-pill primary action + outline secondary action, mono uppercase labels, restrained green accent — mock dialogue in `state/mockEngine.ts` is the same exchange shown in the reference image, and is scripted to land on the same rubric values: Clarifying 3/3, Approach 2/3, Code quality 1/3, Complexity 0/3)
+- [x] styling follows `docs/ui-reference.png` (off-white/sage panel, thin borders, dark-pill primary action + outline secondary action, mono uppercase labels, restrained green accent)
+- [x] panel sits **beside** the LeetCode editor, not over it (added after first manual review)
 
 ## Completed
 - `state/types.ts`, `state/interviewReducer.ts`, `state/interviewStore.tsx` — typed store (Context + `useReducer`, no external state library, per architecture.md §C decision).
-- `state/mockEngine.ts` — scripted interview timeline (matches the UI reference dialogue/rubric exactly), tiered mock hints, mock final-review builder.
-- Components: `StatusIndicator`, `Transcript`, `Rubric`, `HintButton`, `EndReviewButton`, `StartScreen`, `Review`, `InterviewPanel` (orchestrator).
-- `content/App.tsx` + `content/index.tsx` — shadow-DOM mount with Tailwind CSS injected as an inline `<style>` (not `document.head`, so it doesn't leak into/from LeetCode's own styles), plus a `MutationObserver`-based re-mount for LeetCode's SPA navigation between problems.
-- Full idle → recording (scripted dialogue + rubric ticks) → hint request → end & review interactive flow, all without any backend.
+- `state/mockEngine.ts` — scripted interview timeline (matches the UI reference dialogue), tiered mock hints, final-review builder that now derives its rubric from the same live-accumulated `state.rubric` rather than a separate hardcoded object.
+- Components: `StatusIndicator`, `Transcript`, `Rubric` (now used only inside `Review`, with a `label` prop — "RUBRIC SO FAR" vs "RUBRIC BREAKDOWN"), `HintButton`, `EndReviewButton`, `StartScreen`, `Review`, `InterviewPanel` (orchestrator).
+- `content/App.tsx` + `content/index.tsx` — shadow-DOM mount with Tailwind CSS injected as an inline `<style>`, `MutationObserver`-based re-mount for LeetCode's SPA navigation.
+- `content/layout.ts` (new, post-review fix) — reserves 420px on the viewport's right edge via `margin-right` on `<html>` so LeetCode's own layout reflows beside the panel instead of being covered by it.
+- Full idle → recording (scripted dialogue) → hint request → end & review interactive flow, all without any backend.
 - Unit tests: `interviewReducer.test.ts` (5 cases), `StatusIndicator.test.tsx`, `Rubric.test.tsx`.
 
+## Post-review fixes (2026-09-12, after first manual test by the user)
+User tested the built extension in real Chrome against `leetcode.com/problems/two-sum`. Three findings, two fixed here, one confirmed as expected behaviour:
+1. **Fixed** — panel was overlaying/blocking the code editor. Fixed via `content/layout.ts` (see architecture.md §C).
+2. **Fixed (product decision, asked user first since it contradicted PRD §3.3/FR13/the UI reference)** — live "RUBRIC SO FAR" section removed from the in-progress panel; rubric only shown on the Review screen. Documented as a deliberate deviation in architecture.md §O.
+3. **Confirmed expected, not a bug** — "not recording me, dummy speech sequence": correct, Feature 02 is mock-data-only by design; real mic/STT lands in Phase 4.
+
 ## Remaining
-- Real-browser manual verification (see Known issues/blockers) — this is the only remaining item.
-- Deferred, not blocking this feature: the panel is currently a fixed overlay rather than reflowing LeetCode's own layout to sit flush beside it (would require injecting a light-DOM style onto the host page, a bigger DOM-intrusion than this phase's scope — noted as a Phase 10 polish candidate, not silently dropped).
+Nothing.
 
 ## Files changed
-- `extension/src/state/*`, `extension/src/components/*`, `extension/src/content/*`, `extension/src/utils/format.ts`
+- `extension/src/state/*`, `extension/src/components/*`, `extension/src/content/*` (incl. new `layout.ts`), `extension/src/utils/format.ts`
 
 ## Tests/checks run
-- `npm run --workspace extension test` — 9/9 pass (3 new component/reducer test files)
-- `npm run --workspace extension typecheck` / `lint` / `build` — all pass (same run as Feature 01)
-- Structural check: inspected `extension/dist/manifest.json` post-build — content script, background worker, host permissions all correctly generated
+- `npm run --workspace extension test` — 9/9 pass
+- `npm run --workspace extension typecheck` / `lint` / `build` — all pass
+- Manual, live Chrome against `leetcode.com/problems/two-sum/description/` (via `claude-in-chrome` browser automation, connected this session): verified panel docks beside the editor with no overlap, start → live dialogue (rubric correctly hidden) → end & review (rubric correctly shown, derived from live state) all render correctly, no console errors observed
 
 ## Verification
-Automated + structural verification complete. **Manual verification not performed**: this session's Chrome browser automation tool (`claude-in-chrome`) reported "Browser extension is not connected" when queried, so loading the built `extension/dist` as an unpacked extension against a real `leetcode.com/problems/*` page and visually diffing against `docs/ui-reference.png` could not be done here. Per CLAUDE.md's completion rule, this keeps the feature at `IMPLEMENTED`, not `VERIFIED`/`DONE`, until that manual pass happens.
+VERIFIED and DONE. Real-browser manual verification completed this session (browser tool connected, unlike the previous session) — both post-review fixes confirmed working live against a real LeetCode page, screenshots inspected directly.
 
 ## Known issues/blockers
-- **Blocker for VERIFIED/DONE only**: real-browser manual test not yet performed (tool unavailable this session, not a code issue). Next session (or the user) should: `chrome://extensions` → enable Developer mode → Load unpacked → `extension/dist` → open a real `leetcode.com/problems/<slug>` page → click "Start AI Interview" → compare against `docs/ui-reference.png` → click through hint + end & review states.
-- Fixed overlay vs. reflowed layout (see Remaining) — intentional scope decision for this phase, not an oversight.
+None.
 
 ## Next action
-Run the manual Chrome verification above. If it passes as-is, flip status to VERIFIED then DONE. If the visual comparison turns up gaps against `docs/ui-reference.png`, fix in `extension/src/components/*` / `globals.css` before flipping status.
+None — feature complete. Proceed to Phase 2 (Feature 03/04).
 
 ---
 

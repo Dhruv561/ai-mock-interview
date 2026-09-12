@@ -7,7 +7,6 @@ import {
 import { EndReviewButton } from "./EndReviewButton";
 import { HintButton } from "./HintButton";
 import { Review } from "./Review";
-import { Rubric } from "./Rubric";
 import { StartScreen } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
 import { Transcript } from "./Transcript";
@@ -47,7 +46,7 @@ export function InterviewPanel() {
     dispatch({ type: "session/end" });
     dispatch({
       type: "review/ready",
-      review: buildMockReview(state.elapsedSeconds),
+      review: buildMockReview(state.rubric, state.elapsedSeconds),
     });
   }
 
@@ -59,8 +58,14 @@ export function InterviewPanel() {
 
       {(state.status === "recording" || state.status === "paused") && (
         <>
+          {/*
+           * Deliberate deviation from PRD §3.3 / docs/ui-reference.png,
+           * which show a live "RUBRIC SO FAR" section: product decision
+           * (2026-09-12) to only reveal scores on the Review screen so
+           * candidates aren't watching live numbers during the interview.
+           * See architecture.md §1 and progress.md decisions log.
+           */}
           <Transcript messages={state.messages} />
-          <Rubric rubric={state.rubric} />
           <div className="flex gap-2 px-5 py-4">
             <HintButton
               onClick={handleHint}

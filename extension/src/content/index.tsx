@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import cssText from "../styles/globals.css?inline";
 import { App } from "./App";
+import { releasePageSpace, reservePageSpace } from "./layout";
 
 const HOST_ID = "ai-mock-interview-root";
 
@@ -27,10 +28,12 @@ function mount() {
   shadow.appendChild(mountPoint);
 
   createRoot(mountPoint).render(<App />);
+  reservePageSpace();
 }
 
 function unmount() {
   document.getElementById(HOST_ID)?.remove();
+  releasePageSpace();
 }
 
 mount();

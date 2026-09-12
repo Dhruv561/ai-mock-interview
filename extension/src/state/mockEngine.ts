@@ -149,17 +149,13 @@ export function nextMockHint(alreadyRequestedCount: number): HintEntry {
   return HINTS[index];
 }
 
-export function buildMockReview(elapsedSeconds: number): FinalReview {
+export function buildMockReview(
+  rubric: FinalReview["rubric"],
+  elapsedSeconds: number,
+): FinalReview {
   return {
     overallScore: 7.8,
-    rubric: {
-      clarifying: 3,
-      approach: 2,
-      code_quality: 2,
-      complexity: 1,
-      communication: 2,
-      testing: 0,
-    },
+    rubric,
     strengths: [
       "Asked about unsorted input and empty-array edge cases before writing any code.",
       "Clearly stated the sort-then-sweep approach before touching the editor.",

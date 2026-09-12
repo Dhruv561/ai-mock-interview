@@ -5,11 +5,17 @@ import {
   type RubricState,
 } from "../state/types";
 
-export function Rubric({ rubric }: { rubric: RubricState }) {
+export function Rubric({
+  rubric,
+  label = "RUBRIC SO FAR",
+}: {
+  rubric: RubricState;
+  label?: string;
+}) {
   return (
-    <div className="border-t border-panel-border px-5 py-4">
+    <div>
       <div className="mb-3 font-mono text-[11px] tracking-wider text-ink-faint">
-        RUBRIC SO FAR
+        {label}
       </div>
       <div className="space-y-2.5">
         {RUBRIC_CATEGORIES.map((category) => {

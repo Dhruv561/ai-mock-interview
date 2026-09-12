@@ -1,10 +1,6 @@
-import {
-  RUBRIC_CATEGORIES,
-  RUBRIC_LABELS,
-  RUBRIC_MAX,
-  type FinalReview,
-} from "../state/types";
+import type { FinalReview } from "../state/types";
 import { formatElapsed } from "../utils/format";
+import { Rubric } from "./Rubric";
 
 export function Review({
   review,
@@ -24,28 +20,7 @@ export function Review({
           </div>
         </div>
 
-        <div className="space-y-2.5">
-          {RUBRIC_CATEGORIES.map((category) => {
-            const value = review.rubric[category];
-            const pct = (value / RUBRIC_MAX) * 100;
-            return (
-              <div key={category} className="flex items-center gap-3">
-                <span className="w-28 shrink-0 text-sm text-ink">
-                  {RUBRIC_LABELS[category]}
-                </span>
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-track">
-                  <div
-                    className="h-full rounded-full bg-accent"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <span className="w-8 shrink-0 text-right font-mono text-xs text-ink-faint">
-                  {value}/{RUBRIC_MAX}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        <Rubric rubric={review.rubric} label="RUBRIC BREAKDOWN" />
 
         <div>
           <div className="mb-2 font-mono text-[11px] tracking-wider text-ink-faint">

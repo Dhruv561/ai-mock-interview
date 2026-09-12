@@ -156,6 +156,7 @@ Each subsystem below states responsibility, files, inputs/outputs, dependencies,
 - **Dependencies:** React 18, Tailwind CSS, no external state library.
 - **Testing strategy:** vitest + React Testing Library — reducer transition tests (pure functions, easy to test exhaustively), component render tests using mocked store state (recording indicator states, rubric bar widths, transcript ordering).
 - **Risks:** shadow-DOM + Tailwind interaction (Tailwind's injected `<style>` must be placed inside the shadow root, not `document.head`). Tested manually in Phase 1.
+- **Page layout (added after first manual review, 2026-09-12):** the panel does not float over LeetCode's editor. `extension/src/content/layout.ts` reserves `PANEL_WIDTH_PX` (420px) on the right edge of the viewport by setting `margin-right` (`!important`) on `<html>` while the panel is mounted, so LeetCode's own fluid layout shrinks to fit beside it — the same technique other docked-sidebar extensions (e.g. Grammarly) use. This also shifts the containing block for LeetCode's own `position: fixed` elements, so they don't stay pinned underneath the panel. Verified manually against a real `leetcode.com/problems/two-sum` page.
 - **Done when:** Phase 1 acceptance criteria in `FEATURE_PROGRESS.md` Feature 02 are all met using mocked interview data, no backend required.
 
 ### D. LeetCode problem/code extraction strategy
@@ -326,6 +327,7 @@ error                      { code: str, message: str, recoverable: bool }
 - **Inputs:** LLM-proposed `rubric_updates` accompanying an `ask_question`/`transition_stage` action.
 - **Outputs:** `rubric.updated` events, each carrying an `evidence` pointer (transcript segment id, code snapshot id, or hint id) — never a bare number with no traceable cause (matches FR13/CLAUDE.md §10).
 - **Dependencies:** §I, §L.
+- **PRD deviation (product decision, 2026-09-12):** `rubric.updated` events are still computed and accumulated live on the backend exactly as FR13 specifies, but the extension UI deliberately does **not** render a live "RUBRIC SO FAR" section during the interview, contrary to PRD §3.3 and `docs/ui-reference.png`. Candidates only see the rubric on the post-interview Review screen. This was a product call made after reviewing the built UI (not a technical constraint) — live numeric scores read as distracting/judgy mid-interview. State/events are unaffected; only the extension's live-panel rendering changed (`extension/src/components/InterviewPanel.tsx`). If a future need re-emerges for live rubric visibility (e.g. an interviewer-facing view), the data is already there — it's a UI-only change to re-add.
 - **Testing strategy:** unit tests — updates clamp to [0,3], history is append-only and queryable by category, evidence field is required (schema-enforced, not optional).
 - **Risks:** noisy/too-frequent updates degrading the "evidence-based" feel — the controller only applies rubric updates that ride along with an already-gated interviewer action, never on a separate trigger.
 - **Done when:** Feature 13 acceptance criteria met.
