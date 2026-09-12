@@ -1,0 +1,8 @@
+{
+  "name": "ai-mock-interview",
+  "private": true,
+  "workspaces": [
+    "extension",
+    "shared"
+  ]
+}

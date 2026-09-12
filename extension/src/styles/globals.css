@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens lifted from docs/ui-reference.png: off-white/sage panel
+ * background, near-black ink, a single restrained green accent, thin
+ * borders. Deliberately not a generic dark-mode/light-mode system — the
+ * reference is a single committed light look (see CLAUDE.md UI principles).
+ */
+@theme {
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+    sans-serif;
+
+  --color-panel-bg: #f4f5f0;
+  --color-panel-border: #e1e3da;
+  --color-card-bg: #ffffff;
+  --color-ink: #14161a;
+  --color-ink-muted: #6b7280;
+  --color-ink-faint: #9ca3af;
+  --color-accent: #2f8f5b;
+  --color-accent-soft: #dcead0;
+  --color-track: #e5e7e0;
+}
+
+#app-root {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}

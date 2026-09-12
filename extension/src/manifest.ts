@@ -1,0 +1,30 @@
+import { defineManifest } from "@crxjs/vite-plugin";
+import pkg from "../package.json" with { type: "json" };
+
+// MV3 manifest. Content script owns UI, media capture, and the WebSocket
+// connection (see architecture.md §B) — the background service worker is
+// deliberately minimal because MV3 service workers can be evicted at any
+// time and must not hold session-critical state.
+export default defineManifest({
+  manifest_version: 3,
+  name: "AI Mock Interview",
+  description:
+    "Turns a LeetCode coding problem into a realistic AI technical interview.",
+  version: pkg.version,
+  action: {
+    default_title: "AI Mock Interview",
+  },
+  background: {
+    service_worker: "src/background/index.ts",
+    type: "module",
+  },
+  content_scripts: [
+    {
+      matches: ["https://leetcode.com/problems/*"],
+      js: ["src/content/index.tsx"],
+      run_at: "document_idle",
+    },
+  ],
+  permissions: ["scripting", "storage"],
+  host_permissions: ["https://leetcode.com/*"],
+});

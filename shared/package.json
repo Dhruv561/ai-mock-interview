@@ -1,0 +1,10 @@
+{
+  "name": "@ai-mock-interview/shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "events.ts",
+  "dependencies": {
+    "zod": "^4.6.2"
+  }
+}

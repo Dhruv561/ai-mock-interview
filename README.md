@@ -6,7 +6,7 @@ LeetCode stays the main workspace. The extension adds a persistent right-side in
 
 ## Project status
 
-**Planning complete, implementation not yet started.** See `progress.md` for the current dashboard and `TODO.md` for the full task breakdown. The sections below describe the system **as designed** in `architecture.md`; setup instructions will become literally runnable once Phase 1 scaffolding lands.
+**Phase 1 (repo scaffolding + mocked interview panel UI) is implemented.** The extension boots, builds, and runs a fully interactive mocked interview (no backend required); the backend boots and serves a health check. See `progress.md` for the current dashboard and `TODO.md` for the full task breakdown. No AI/speech/backend wiring exists yet — that's Phase 2 onward.
 
 ## Documentation map
 
@@ -45,31 +45,35 @@ Full detail, including per-subsystem responsibilities, inputs/outputs, testing s
 ## Repository layout
 
 ```text
-extension/   Chrome extension — Vite + React + TypeScript + Tailwind
+extension/   Chrome extension — Vite + React + TypeScript + Tailwind (npm workspace)
 backend/     FastAPI backend — Python, managed with uv
-shared/      Hand-mirrored event schemas (Zod on the TS side, Pydantic on the Python side)
-scripts/     dev.sh (run everything locally), check.sh (lint/type/test)
+shared/      Hand-mirrored event schemas (Zod on the TS side, Pydantic on the Python side; npm workspace)
+scripts/     dev.sh (run everything locally), check.sh (lint/type/test/build)
 docs/        Design reference and supporting docs
 ```
 
-Not yet created — this is the target structure from `architecture.md` §2.
-
-## Local development (target workflow)
+## Local development
 
 Prerequisites: Node 20+, Python 3.11+, [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 cp .env.example .env
+npm install --legacy-peer-deps   # see note below
+(cd backend && uv sync)
 ./scripts/dev.sh   # runs backend (uv) + extension dev build (npm) concurrently
 ```
 
-By default `USE_MOCK_PROVIDERS=true`, so the entire happy path — including a way to simulate candidate speech without a microphone (`dev.simulate_transcript`) — runs with **no API keys at all**. See `architecture.md` §S.
+`--legacy-peer-deps` is currently required: `npm install` otherwise hits a known npm/arborist resolver crash on vitest's optional browser-mode peer packages. Not specific to any version choice made here — see `progress.md`'s decisions log.
 
-To load the extension in Chrome: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist`.
+By default `USE_MOCK_PROVIDERS=true`, so the entire happy path runs with **no API keys at all** once the backend's mock providers land in later phases. See `architecture.md` §S.
+
+To load the extension in Chrome: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist` (run `npm run --workspace extension build` first, or use `npm run --workspace extension dev` for a watch build). The panel currently runs a fully scripted mock interview (Feature 02) — no backend connection yet.
+
+To run all checks (lint/typecheck/test/build, both projects): `./scripts/check.sh`.
 
 ## Environment variables
 
-See `.env.example` for the full list once it exists (Phase 1), documented in `architecture.md` §U. Provider secrets (Anthropic, Deepgram, ElevenLabs, Supabase) are backend-only and are never bundled into the extension.
+See `.env.example` for the full list, documented in `architecture.md` §U. Provider secrets (Anthropic, Deepgram, ElevenLabs, Supabase) are backend-only and are never bundled into the extension.
 
 ## Contributing / workflow
 
