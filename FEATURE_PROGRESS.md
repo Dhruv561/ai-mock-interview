@@ -394,10 +394,12 @@ Next action for whoever picks this up: run `uv run uvicorn app.main:app` and loa
 
 ## Known issues/blockers
 - No origin/auth check on the WS endpoint — anyone who can reach the backend port can open a session. Fine for local-only hackathon use (`ALLOWED_ORIGINS` already documents the intended origin allowlist for later), explicitly deferred to Feature 16 hardening, not silently forgotten.
-- The one live browser↔live-backend check described above, blocked by this session's tooling, not a known code defect.
+- **OPEN, UNRESOLVED (2026-09-13) — the extension cannot connect to a live backend from a real browser.** First attempted against the user's own Chrome + a real local backend; the panel sat on "RECONNECTING…" indefinitely and DevTools showed repeated `WebSocket connection to 'ws://localhost:8000/ws/interview' failed:`. This is now the project's top blocker — every layer above this transport is built and green in automated tests, but the stack has never run end-to-end live. Full diagnostic state (confirmed facts, what's been ruled out, applied-but-unverified fix, and the ordered list of untested hypotheses) is written up in `architecture.md` §4 under "OPEN BUG" — **read that before touching anything**, it will save re-deriving an hour of diagnosis.
+  - Short version: `localhost` resolves to IPv6 `::1` first on macOS but `uvicorn --host 0.0.0.0` binds IPv4 only, so Chrome's WebSocket hit a dead address. The extension's default URL was changed to `ws://127.0.0.1:8000/...` and verified in the built bundle, but **that fix is unverified** — the user's failing console screenshot still showed the old `localhost` URL, so it may predate reloading the rebuilt extension. Retest that first.
+  - Ruled out: missing `.env` (both optional, defaults verified correct), backend not running (healthy throughout), CSP, mixed content.
 
 ## Next action
-Optional live check described above, then flip to `DONE`. Otherwise: proceed to Phase 4 (Feature 05 — microphone + STT), which is the next item in `TODO.md`.
+**Start here next session.** Resolve the open live-connection bug above (details in `architecture.md` §4): reload the rebuilt extension and retest first, since the IPv4 fix may already have resolved it. If it still fails, work the hypothesis list — host permissions, then Private Network Access. Only once the badge reaches "BACKEND CONNECTED" and a real interviewer reply lands in the panel can this feature (and 05/07/08's live checks) flip to `DONE`.
 
 ---
 

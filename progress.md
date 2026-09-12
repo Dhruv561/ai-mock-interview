@@ -4,9 +4,11 @@ High-level project dashboard. Update after every meaningful work slice, per `CLA
 
 ---
 
-## Status: Phase 6 done + extension transcript wired to real events (Feature 08 VERIFIED, Feature 07 DONE)
+## Status: Phase 6 done, but BLOCKED on a live-connection bug — start there next session
 
 Last updated: 2026-09-13
+
+> **⚠ Top priority next session:** the extension has never successfully connected to a live backend from a real browser. Everything above the transport is built and passing automated tests, but the stack has not run end-to-end once. Full diagnostic write-up — confirmed facts, what's ruled out, the applied-but-unverified fix, and ordered next hypotheses — is in `architecture.md` §4 under "OPEN BUG", mirrored in `FEATURE_PROGRESS.md` Feature 06. **Read that first; don't re-derive it.** Quickest thing to try: reload the rebuilt extension and retest — the IPv4 fix applied at the end of the session was never verified against a reloaded build.
 
 ## Current phase
 
@@ -62,7 +64,9 @@ Nothing actively blocking. Four features (05, 06, 07, 08) share one optional fol
 
 ## Next
 
-Phase 7 (Feature 10) — ElevenLabs TTS: server-side ElevenLabs integration, streaming synthesized audio back over the WS connection for `interviewer.transcript`/`hint.response` text, candidate mute control. Per `TODO.md`.
+**1. Fix the live-connection bug (blocking — see the banner at the top of this file).** Until the extension can actually reach a running backend from a real browser, none of Features 05-08 can be confirmed working outside their automated tests, and no demo is possible. Everything else waits behind this.
+
+**2. Then** Phase 7 (Feature 10) — ElevenLabs TTS: server-side ElevenLabs integration, streaming synthesized audio back over the WS connection for `interviewer.transcript`/`hint.response` text, candidate mute control. Per `TODO.md`.
 
 See `TODO.md` for the full granular breakdown and `FEATURE_PROGRESS.md` for the authoritative per-feature checkpoint records.
 
@@ -71,7 +75,9 @@ See `TODO.md` for the full granular breakdown and `FEATURE_PROGRESS.md` for the 
 - `npm install` at the workspace root requires `--legacy-peer-deps` — a known npm/arborist resolver crash (`Cannot read properties of null (reading 'edgesOut')`) triggered by vitest's optional browser-mode peer packages, unrelated to any version choice made here. Anyone re-running install from a clean checkout needs the same flag; called out in `README.md` and `FEATURE_PROGRESS.md` Feature 01.
 - No external API keys configured — not needed until Phase 7 (TTS); STT (Deepgram) and the interviewer LLM (Anthropic) are now both implemented behind their provider interfaces but unverified without real keys — mock providers cover the happy path until then (`architecture.md` §S).
 - This session's browser console-log tool didn't reliably capture repeated content-script-origin messages (see `FEATURE_PROGRESS.md` Feature 04's Verification note) — not a product issue, but worth knowing before relying on it for the next phase's live testing; direct DOM-state inspection via the JS-exec tool was the reliable fallback.
-- This session's `claude-in-chrome` automated browser could not reach `localhost:8000`/`127.0.0.1:8000` at all (a plain `fetch` timed out) even while this session's own shell could `curl` the same backend successfully — the two are on different hosts/network namespaces. Blocks a true live browser↔backend round trip for WS-dependent features (06 onward) from this tool; see `architecture.md` §4 and `FEATURE_PROGRESS.md` Feature 06 for the workaround (automated ASGI-level backend tests + simulated-socket extension tests) and the one manual check still worth doing on a machine where both share a network.
+- This session's `claude-in-chrome` automated browser could not reach `localhost:8000`/`127.0.0.1:8000` at all (a plain `fetch` timed out) even while this session's own shell could `curl` the same backend successfully — that automated browser is on a different host/network namespace. Blocks a true live browser↔backend round trip for WS-dependent features (06 onward) *from that tool*; see `architecture.md` §4 and `FEATURE_PROGRESS.md` Feature 06 for the workaround (automated ASGI-level backend tests + simulated-socket extension tests).
+- **BLOCKING: the extension can't connect to a live backend from the user's real browser either** — separate from the automated-browser constraint above, and a real product bug rather than a tooling artifact. Confirmed root cause so far: `localhost` resolves to IPv6 `::1` first on macOS while `uvicorn --host 0.0.0.0` binds IPv4 only, so Chrome's WebSocket connects to a dead address (`curl` hides this via its own IPv4 fallback). Extension default URL changed to `ws://127.0.0.1:8000/...` in response, **but that fix is unverified** — the user's failing console screenshot still showed the old `localhost` URL, so it may predate reloading the rebuilt extension. Ruled out: missing `.env` (optional, defaults verified), backend down (healthy throughout), CSP, mixed content. Full diagnostic state and ordered next hypotheses in `architecture.md` §4 "OPEN BUG".
+- A `uvicorn` process was left running on port 8000 from this session's debugging (started by Claude, not by the user). Stop it with `pkill -f "uvicorn app.main:app"` if it's in the way.
 
 ## Decisions log (Phase 1 additions)
 
@@ -129,6 +135,7 @@ See `TODO.md` for the full granular breakdown and `FEATURE_PROGRESS.md` for the 
 | 2026-09-13 | `LLMProvider.propose_action` takes pre-built prompt strings, not `InterviewState` directly; prompt construction lives in `agents/interviewer.py` + `interview/prompts.py`, not in the provider | Keeps the provider layer a reusable, interview-agnostic "text in, structured action out" transport, matching how `providers/stt` was kept close to raw audio bytes rather than full interview semantics |
 | 2026-09-13 | Extension transcript panel initially left wired to the mock engine only — **superseded same day**: user asked why their input wasn't appearing, confirmed the gap was exactly what was flagged, and asked for it to be wired; now driven by real events via `state/liveInterviewEngine.ts` | TODO.md's actual Phase 6 scope was backend-only, so it wasn't assumed without being asked — but once asked, it was a natural, well-scoped follow-up rather than a new feature |
 | 2026-09-13 | `session.start` moved from firing automatically once the problem is detected to firing on the Start button click | Caught while wiring the transcript: LeetCode's boilerplate starter code can trigger a `code.update` (and a real interviewer reply) within seconds of page load, before the candidate ever clicks Start — under the old design that reply would be silently wiped the moment they did, since `session/start`'s reducer resets `state.messages` |
+| 2026-09-13 | Extension's default backend URL pins the literal IPv4 address `ws://127.0.0.1:8000/...` instead of `ws://localhost:8000/...` | macOS resolves `localhost` to IPv6 `::1` first, but `uvicorn --host 0.0.0.0` binds IPv4 only — Chrome's WebSocket therefore connects to a dead address and fails forever, while `curl localhost:8000` appears fine because curl falls back to IPv4 itself. Pinning the literal address removes the ambiguity. Commented in-place in both `interviewSocket.ts` and `extension/.env.example` so it doesn't get "tidied" back |
 
 ## Milestone table
 
