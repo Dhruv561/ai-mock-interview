@@ -1,0 +1,6 @@
+{
+  "type": "code.update",
+  "language": "python",
+  "code": "def two_sum(nums, target):\n    seen = {}\n    for i, n in enumerate(nums):\n        if target - n in seen:\n            return [seen[target - n], i]\n        seen[n] = i\n",
+  "timestamp": 1757676000.0
+}

@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "seq": 0,
+  "code": "invalid_event",
+  "message": "Event failed validation at 'language': Field required",
+  "recoverable": true
+}

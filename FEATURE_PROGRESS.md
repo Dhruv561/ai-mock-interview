@@ -224,7 +224,7 @@ None — feature complete.
 # Feature 04 — Live code extraction and change detection
 
 ## Status
-IMPLEMENTED
+DONE
 
 ## Priority
 P0
@@ -233,14 +233,14 @@ P0
 2026-09-12
 
 ## Current task
-Complete except for the one criterion that genuinely depends on Phase 3 (WebSocket transport doesn't exist yet — see below).
+Complete.
 
 ## Acceptance criteria
 - [x] detects current language (Monaco's own `languageId` via the MAIN-world bridge, e.g. "cpp"; DOM-scrape fallback maps the language-selector button label to the same style of id)
 - [x] extracts current code (bridge: `model.getValue()`; DOM fallback: reconstructs from `.view-line` nodes — documented as incomplete for long files since Monaco virtualizes off-screen lines, per architecture.md §D)
 - [x] detects meaningful code changes
 - [x] debounces updates (settle-based: 1s poll, only fires after 2.5s of no further change, plus a minimum-diff-size gate against the last *emitted* snapshot — architecture.md §L rule 3)
-- [ ] sends typed code_update events — **intentionally not yet**: there is no WebSocket client (Phase 3/Feature 06). `content/index.tsx` currently logs each meaningful change instead of sending it. This is a real, tracked gap, not an oversight — will be closed when Feature 06 lands by swapping the `console.debug` callback in `index.tsx` for `ws.send(...)`.
+- [x] sends typed code_update events — closed by Feature 06 (2026-09-12): `content/index.tsx`'s `watchCode` callback now calls `getInterviewSocket().send({type: "code.update", ...})` once a session exists, falling back to the old debug log only if no session has started yet. Validated against the shared Zod schema before send (`networking/websocket.ts`), and the backend's `CodeUpdateEvent` Pydantic model accepts the exact same shape (`shared/fixtures/code_update.json` contract-tested on both sides).
 - [x] does not send an event for every keystroke (verified — see below)
 
 ## Completed
@@ -248,12 +248,13 @@ Complete except for the one criterion that genuinely depends on Phase 3 (WebSock
 - `content/editor.ts` — isolated-world adapter: `requestFromBridge()` (postMessage request/response, 500ms timeout), `scrapeFromDom()` fallback, `getCurrentSnapshot()`, `watchCode()` (1s poll wired to the detector below).
 - `content/codeChangeDetector.ts` — pure, DOM-free debounce/diff state machine (`createCodeChangeDetector`), deliberately separated out so it's unit-testable without a browser.
 - Wired into `content/index.tsx`: `watchCode()` started on mount, stopped on unmount (interval leak would otherwise persist across SPA navigations).
+- (2026-09-12, Feature 06) `watchCode`'s callback now sends a real `code.update` WS event once a session exists, instead of only logging — see Feature 06 for the transport itself.
 
 ## Remaining
-- Nothing beyond the Phase-3-dependent criterion noted above.
+Nothing.
 
 ## Files changed
-- `extension/src/content/mainWorldBridge.ts`, `extension/src/content/editor.ts`, `extension/src/content/codeChangeDetector.ts`, `extension/src/content/codeChangeDetector.test.ts`, `extension/src/content/index.tsx`, `extension/src/manifest.ts`
+- `extension/src/content/mainWorldBridge.ts`, `extension/src/content/editor.ts`, `extension/src/content/codeChangeDetector.ts`, `extension/src/content/codeChangeDetector.test.ts`, `extension/src/content/index.tsx` (updated again by Feature 06), `extension/src/manifest.ts`
 
 ## Tests/checks run
 - `npm run --workspace extension test` — new `codeChangeDetector.test.ts` (6 cases: no emission while still changing, emits once settled, doesn't re-emit the same settled snapshot, skips below-threshold changes, emits again once a later change clears the threshold, language change counts as meaningful even with identical code)
@@ -262,15 +263,15 @@ Complete except for the one criterion that genuinely depends on Phase 3 (WebSock
 - `npm run --workspace extension typecheck` / `lint` / `build` — all pass; build output confirms `mainWorldBridge.ts` compiles to its own chunk and the generated `manifest.json` carries the `world: "MAIN"` content_scripts entry correctly
 
 ## Verification
-IMPLEMENTED, not fully DONE — the one unchecked acceptance criterion (`sends typed code_update events`) genuinely requires Phase 3's WebSocket client, which doesn't exist yet; this is sequencing, not a defect. Everything else is verified both by unit test and live browser behavior.
+DONE. The last acceptance criterion (`sends typed code_update events`) closed once Feature 06's WS client existed to send it through — see that feature's record for the one still-open live-E2E caveat (a tooling/network-isolation limitation of this session's browser automation, not a code defect). Everything else is verified both by unit test and live browser behavior.
 
 Testing note for future sessions: this session's `claude-in-chrome` console-log tool reliably captured messages originating from the page's own scripts and from `javascript_tool`-injected code, but only reliably caught *one* message originating from the extension's isolated-world content script across an extended test session (repeated polls afterward showed nothing new, despite the underlying mechanism clearly still running). Root cause not confirmed, but DOM-state inspection (checking `document.getElementById(...)` directly via `javascript_tool`) worked reliably as an alternative and is what most of this feature's live verification above relies on — prefer that approach over trusting repeated console captures from a content script in this environment.
 
 ## Known issues/blockers
-None blocking. The `sends typed code_update events` item is tracked, not forgotten — will close automatically as part of Feature 06's WS client work.
+None.
 
 ## Next action
-Leave as IMPLEMENTED until Feature 06 (WebSocket transport) exists; then wire `watchCode`'s callback in `index.tsx` to send a real `code.update` event, flip the last acceptance criterion, and move to VERIFIED/DONE.
+None — feature complete.
 
 ---
 
@@ -304,27 +305,60 @@ Implement the browser audio manager and provider interface.
 # Feature 06 — Interview WebSocket session
 
 ## Status
-PLANNED
+VERIFIED
 
 ## Priority
 P0
 
+## started_at
+2026-09-12
+
+## Current task
+Complete except one live-in-a-real-browser-against-a-real-backend check, blocked by a tooling constraint this session (see Verification below), not a known code defect.
+
 ## Acceptance criteria
-- [ ] session can start
-- [ ] typed events flow extension → backend
-- [ ] backend → extension events work
-- [ ] reconnect behaviour exists
-- [ ] malformed events are rejected
-- [ ] connection state is reflected in UI
+- [x] session can start
+- [x] typed events flow extension → backend
+- [x] backend → extension events work
+- [x] reconnect behaviour exists
+- [x] malformed events are rejected
+- [x] connection state is reflected in UI
 
 ## Completed
-- None yet.
+- `backend/app/interview/schemas.py` — full typed event catalogue (architecture.md §G): all 10 client events and all 10 server events as discriminated-union Pydantic models (`Field(discriminator="type")`), incl. `ProblemInfo`/`FinalReview`/`TimelineEvent`. Only session.start/pause/resume/end, code.update, transcript.final, hint.requested, screen.recording.*, dev.simulate_transcript (client) and session.started/error (server) are actually produced/consumed by anything yet — the rest (interviewer.*, transcript.partial, rubric.updated, hint.response, review.ready) are typed contracts ahead of Features 07/08/10/11/13/14, per CLAUDE.md's "use typed contracts" rule.
+- `backend/app/websocket/interview.py` — `/ws/interview` endpoint, module-level in-memory `SessionRegistry` (session survives a disconnect for a 5-minute grace window, keyed independently of the socket so a new connection can resume it), per-session seq counter + 200-entry ring buffer for replay, malformed-JSON/failed-validation/no-active-session/unknown-session-on-resume all answered with a typed `error` event without closing the connection.
+- `shared/events.ts` — Zod mirror of the same catalogue (discriminated unions via `z.discriminatedUnion("type", ...)`).
+- `shared/fixtures/{session_start,code_update,session_started,error}.json` + contract tests on both sides (`backend/tests/test_event_fixtures.py`, `extension/src/networking/eventFixtures.test.ts`).
+- `extension/src/networking/websocket.ts` — framework-agnostic client (`connectInterviewSocket`, injectable `WebSocketFactory` for testing): validates outgoing events against the shared Zod schema before sending, drops unrecognized/invalid incoming payloads, tracks `session_id`/`last_seq` and auto-sends `session.resume` on reconnect, exponential backoff (1s → 15s cap), exposes `onStateChange`/`onEvent` subscriptions.
+- `extension/src/networking/interviewSocket.ts` — lazy module-level singleton (`getInterviewSocket()`) shared between `content/index.tsx` (non-React) and `App.tsx` (React), URL from `import.meta.env.VITE_BACKEND_WS_URL` (default `ws://localhost:8000/ws/interview`); `extension/.env.example` documents it.
+- `extension/src/networking/useConnectionState.ts` + `extension/src/components/ConnectionBadge.tsx` — small header badge (CONNECTING…/BACKEND CONNECTED/RECONNECTING…/BACKEND OFFLINE) wired into `App.tsx`, independent of `state/interviewStore`'s mock-driven session status.
+- `content/index.tsx` rewired: sends `session.start {problem, language}` once `waitForProblemInfo()` resolves (falls back to `language: "plaintext"` if the code snapshot isn't available yet), and `watchCode`'s meaningful-change callback now sends a real `code.update` event once a session exists (closes Feature 04's previously-tracked gap) instead of only logging.
+- Also discovered and fixed a real schema bug while wiring this up (not initially caught in planning): `content/leetcode.ts`'s `ProblemInfo.number`/`difficulty` are nullable (best-effort extraction), but the WS schemas had them required — fixed in both `backend/app/interview/schemas.py` and `shared/events.ts` to match reality.
 
 ## Remaining
-- All implementation work.
+- One live check (see Verification) — not required to consider this feature usable, but worth doing once on a machine where the browser and backend share a network before fully closing this out.
+
+## Files changed
+- `backend/app/interview/schemas.py`, `backend/app/websocket/interview.py`, `backend/app/main.py`, `backend/tests/test_websocket_interview.py`, `backend/tests/test_event_fixtures.py`
+- `shared/events.ts`, `shared/fixtures/*.json`
+- `extension/src/networking/{websocket.ts,websocket.test.ts,interviewSocket.ts,useConnectionState.ts,eventFixtures.test.ts}`, `extension/src/components/ConnectionBadge.tsx`, `extension/src/content/{index.tsx,App.tsx}`, `extension/package.json`, `extension/.env.example`
+
+## Tests/checks run
+- `uv run ruff check .` / `uv run pytest -q` (backend) — 13/13 pass, incl. `test_websocket_interview.py` (session start, malformed JSON survives the connection, unknown event type, missing required field, event-before-session-start, resume replays missed events, resume doesn't replay already-seen events, resume of an unknown session) and `test_event_fixtures.py` (4/4)
+- `npm run --workspace extension test` — 32/32 pass, incl. `websocket.test.ts` (7 cases: connecting→open transition, validated send, throws on a schema-violating send, drops an invalid server message, delivers a valid one, full reconnect-with-backoff-and-resume simulation via fake timers + a fake socket, no-reconnect-after-caller-close) and `eventFixtures.test.ts` (4/4)
+- `npm run --workspace extension typecheck` / `lint` / `build` — all pass
+- Manual, live Chrome (`claude-in-chrome`, this session) against `leetcode.com/problems/add-two-numbers/description/` with a freshly reloaded extension build: panel still renders correctly (layout reflow intact, `Start AI Interview` present), clicking it still drives the mock engine to `RECORDING` (no regression from this feature's changes), no uncaught console errors, connection badge renders and shows `CONNECTING…` (correct given the backend was unreachable from that browser — see Verification)
+
+## Verification
+VERIFIED, not DONE. The WS protocol itself (session start, typed event validation, malformed-event rejection, resume/replay) is verified for real — `backend/tests/test_websocket_interview.py` drives Starlette's actual ASGI WebSocket implementation via `TestClient.websocket_connect`, not a mock. The extension client's reconnect/backoff/resume state machine is verified for real against a fake-but-behaviorally-accurate socket. What is **not** verified this session is an actual extension-in-a-real-browser round trip against a **live** backend process: this session's `claude-in-chrome` browser could not reach `localhost:8000` or `127.0.0.1:8000` at all — a plain `fetch('http://localhost:8000/health')` from that browser timed out, even though `curl localhost:8000/health` succeeded from this session's own shell at the same time. The two are evidently on different hosts/network namespaces; this is a tooling/environment constraint (documented in `architecture.md` §4, alongside the earlier `chrome://extensions` automation and console-log-capture limitations from Feature 02/04), not a code defect. Given that constraint, live verification was limited to confirming the badge/panel render correctly and don't regress anything.
+Next action for whoever picks this up: run `uv run uvicorn app.main:app` and load the unpacked extension in the *same* machine's Chrome, open a LeetCode problem, and confirm the header badge reaches "BACKEND CONNECTED" — if it does, flip this to `DONE`.
+
+## Known issues/blockers
+- No origin/auth check on the WS endpoint — anyone who can reach the backend port can open a session. Fine for local-only hackathon use (`ALLOWED_ORIGINS` already documents the intended origin allowlist for later), explicitly deferred to Feature 16 hardening, not silently forgotten.
+- The one live browser↔live-backend check described above, blocked by this session's tooling, not a known code defect.
 
 ## Next action
-Define schemas and implement the WebSocket session manager.
+Optional live check described above, then flip to `DONE`. Otherwise: proceed to Phase 4 (Feature 05 — microphone + STT), which is the next item in `TODO.md`.
 
 ---
 

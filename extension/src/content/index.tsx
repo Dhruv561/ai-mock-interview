@@ -1,7 +1,8 @@
 import { createRoot } from "react-dom/client";
+import { getInterviewSocket } from "../networking/interviewSocket";
 import cssText from "../styles/globals.css?inline";
 import { App } from "./App";
-import { watchCode } from "./editor";
+import { getCurrentSnapshot, watchCode } from "./editor";
 import { releasePageSpace, reservePageSpace } from "./layout";
 import { isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
 
@@ -9,6 +10,10 @@ const HOST_ID = "ai-mock-interview-root";
 const LOG_PREFIX = "[ai-mock-interview]";
 
 let stopWatchingCode: (() => void) | null = null;
+// Set once session.start has been sent for the current problem page, so
+// watchCode's callback knows whether code.update has anywhere to go yet.
+// Reset on every SPA navigation (see the MutationObserver below).
+let sessionStarted = false;
 
 function mount() {
   if (!isSupportedProblemPage() || document.getElementById(HOST_ID)) return;
@@ -31,23 +36,40 @@ function mount() {
   createRoot(mountPoint).render(<App />);
   reservePageSpace();
 
-  // Extraction is not yet wired into the (still mock-data) interview panel —
-  // that lands in Phase 3/6 when this replaces the mock engine. For now it
-  // runs for real and logs, so Feature 03/04 can be verified against real
-  // pages without a backend to send events to yet. See FEATURE_PROGRESS.md
-  // Feature 03/04.
-  void waitForProblemInfo().then((problem) => {
-    if (problem) {
-      console.debug(`${LOG_PREFIX} problem detected`, problem);
-    } else {
+  const socket = getInterviewSocket();
+
+  // Extraction now feeds a real backend session (Feature 06) — the
+  // interview panel itself still runs on state/mockEngine.ts until
+  // Features 07/08 replace it with real server events; this transport and
+  // the mock UI are independent until then.
+  void waitForProblemInfo().then(async (problem) => {
+    if (!problem) {
       console.warn(`${LOG_PREFIX} could not extract problem info on this page`);
+      return;
     }
+    console.debug(`${LOG_PREFIX} problem detected`, problem);
+    const snapshot = await getCurrentSnapshot();
+    socket.send({
+      type: "session.start",
+      problem,
+      language: snapshot?.language ?? "plaintext",
+    });
+    sessionStarted = true;
   });
 
   stopWatchingCode = watchCode((snapshot) => {
-    console.debug(`${LOG_PREFIX} meaningful code change`, {
+    if (!sessionStarted) {
+      console.debug(`${LOG_PREFIX} meaningful code change (no session yet)`, {
+        language: snapshot.language,
+        length: snapshot.code.length,
+      });
+      return;
+    }
+    socket.send({
+      type: "code.update",
       language: snapshot.language,
-      length: snapshot.code.length,
+      code: snapshot.code,
+      timestamp: Date.now() / 1000,
     });
   });
 }
@@ -68,6 +90,7 @@ let lastPath = window.location.pathname;
 new MutationObserver(() => {
   if (window.location.pathname === lastPath) return;
   lastPath = window.location.pathname;
+  sessionStarted = false;
   unmount();
   mount();
 }).observe(document.body, { childList: true, subtree: true });

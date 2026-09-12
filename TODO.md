@@ -45,13 +45,13 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 3 — Real-time transport (Feature 06)
 
-- [ ] `backend/app/interview/schemas.py`: Pydantic models for full event catalogue (`architecture.md` §G)
-- [ ] `shared/events.ts`: Zod mirror of the same catalogue
-- [ ] `shared/fixtures/*.json` + contract tests on both sides
-- [ ] `backend/app/websocket/interview.py`: WS endpoint, session registry, seq-numbered dispatch
-- [ ] `extension/src/networking/websocket.ts`: connect, reconnect w/ backoff, `session.resume` replay handling
-- [ ] Malformed-event rejection test
-- [ ] Reconnect/replay integration test
+- [x] `backend/app/interview/schemas.py`: Pydantic models for full event catalogue (`architecture.md` §G)
+- [x] `shared/events.ts`: Zod mirror of the same catalogue
+- [x] `shared/fixtures/*.json` + contract tests on both sides
+- [x] `backend/app/websocket/interview.py`: WS endpoint, session registry, seq-numbered dispatch
+- [x] `extension/src/networking/websocket.ts`: connect, reconnect w/ backoff, `session.resume` replay handling
+- [x] Malformed-event rejection test
+- [x] Reconnect/replay integration test
 
 ## Phase 4 — Microphone + STT (Feature 05)
 
