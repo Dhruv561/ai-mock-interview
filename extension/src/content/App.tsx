@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { InterviewPanel } from "../components/InterviewPanel";
+import { GeminiLivePanel } from "../components/GeminiLivePanel";
 import { PanelResizeHandle } from "../components/PanelResizeHandle";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useConnectionState } from "../networking/useConnectionState";
@@ -36,6 +37,11 @@ function PanelShell() {
   const isActive = state.status === "recording";
   const isFloating = isActive && layout === "floating";
 
+  // Gemini Live (spike) — environment flag to choose pipeline
+  const useGeminiLive = import.meta.env.VITE_USE_GEMINI_LIVE === "true";
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || "ws://127.0.0.1:8000";
+  const authToken = import.meta.env.VITE_AUTH_TOKEN || null;
+
   useEffect(() => {
     // Only the floating/non-floating transition should re-run this — width
     // changes while docked/split are already applied directly by
@@ -48,7 +54,7 @@ function PanelShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFloating]);
 
-  if (isFloating) {
+  if (isFloating && !useGeminiLive) {
     // No card/border/background here — the design (1b) floats the message
     // bubble and control pill as two independent pieces, each with its own
     // shadow/blur, not one shared panel card wrapping both. This container
@@ -63,6 +69,13 @@ function PanelShell() {
     );
   }
 
+  // Gemini Live panel doesn't support floating layout
+  const panelContent = useGeminiLive ? (
+    <GeminiLivePanel backendUrl={backendUrl} authToken={authToken} problemTitle="Coding Problem" />
+  ) : (
+    <InterviewPanel layout={layout} setLayout={setLayout} />
+  );
+
   return (
     <div
       className="fixed inset-y-0 right-0 z-[2147483000] flex flex-col border-l border-panel-border bg-panel-bg"
@@ -71,7 +84,7 @@ function PanelShell() {
       <PanelResizeHandle onPointerDown={startResize} />
       <ConnectionBadge state={connectionState} />
       <div className="min-h-0 flex-1">
-        <InterviewPanel layout={layout} setLayout={setLayout} />
+        {panelContent}
       </div>
     </div>
   );

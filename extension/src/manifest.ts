@@ -57,5 +57,9 @@ export default defineManifest({
     // works against either a local dev backend or the deployed one,
     // whichever VITE_BACKEND_WS_URL points at.
     "http://46.250.244.213:8080/*",
+    // Spike: Gemini Live API WebSocket endpoint (generativelanguage.googleapis.com).
+    // Service worker connects directly from its CSP-exempt context via
+    // portSocketFactory relay to the client.
+    "wss://generativelanguage.googleapis.com/*",
   ],
 });

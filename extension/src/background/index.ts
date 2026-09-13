@@ -25,6 +25,30 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[ai-mock-interview] installed");
 });
 
+// Handle HTTP requests for Gemini Live (spike) — relays REST calls from content
+// script through the service worker (CSP-exempt context) to the backend.
+chrome.runtime.onMessage.addListener((message: unknown, _, sendResponse) => {
+  const msg = message as Record<string, unknown>;
+
+  if (msg.kind === "gemini-live-http") {
+    const url = msg.url as string;
+    const method = msg.method as string;
+    const body = msg.body as string | undefined;
+
+    fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(body && { body }),
+    })
+      .then((response) => response.json())
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((error) => sendResponse({ success: false, error: String(error) }));
+
+    // Return true to indicate we'll send the response asynchronously
+    return true;
+  }
+});
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== INTERVIEW_PORT_NAME) return;
 

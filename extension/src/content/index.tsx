@@ -4,9 +4,11 @@ import cssText from "../styles/globals.css?inline";
 import { App } from "./App";
 import { watchCode } from "./editor";
 import { cacheProblemInfo, hasActiveInterviewSession, resetInterviewSession } from "./interviewSession";
+import { cacheGeminiLiveProblemInfo, resetGeminiLiveSession } from "./geminiLiveSession";
 import { stopAllMicrophoneCapture } from "../media/microphone";
 import { stopAllScreenCapture } from "../media/screen";
 import { stopAllInterviewerAudioPlayback } from "../media/interviewerAudioPlayer";
+import { stopAllGeminiLiveMicrophoneCapture } from "../media/geminiLiveMicrophone";
 import { releasePageSpace, reservePageSpace } from "./layout";
 import { isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
 
@@ -53,6 +55,7 @@ function mount() {
     }
     console.debug(`${LOG_PREFIX} problem detected`, problem);
     cacheProblemInfo(problem);
+    cacheGeminiLiveProblemInfo(problem); // Also cache for Gemini Live pipeline
   });
 
   stopWatchingCode = watchCode((snapshot) => {
@@ -93,6 +96,8 @@ function unmount() {
   stopAllMicrophoneCapture();
   stopAllScreenCapture();
   stopAllInterviewerAudioPlayback();
+  stopAllGeminiLiveMicrophoneCapture(); // Also cleanup Gemini Live mic
+  resetGeminiLiveSession(); // End any active Gemini Live session
 }
 
 mount();
@@ -105,6 +110,7 @@ new MutationObserver(() => {
   if (window.location.pathname === lastPath) return;
   lastPath = window.location.pathname;
   resetInterviewSession();
+  resetGeminiLiveSession(); // Also reset Gemini Live state
   unmount();
   mount();
 }).observe(document.body, { childList: true, subtree: true });
