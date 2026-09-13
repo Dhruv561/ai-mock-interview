@@ -6,6 +6,7 @@ provider keys configured at all (architecture.md §S).
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,7 +17,10 @@ class Settings(BaseSettings):
     # LLM (interviewer + evaluator agents)
     anthropic_api_key: str | None = None
 
-    # Streaming speech-to-text
+    # Streaming speech-to-text. "elevenlabs" is the default (2026-09-13,
+    # see FEATURE_PROGRESS.md Feature 05); "deepgram" stays selectable
+    # since it was already implemented and verified live.
+    stt_provider: Literal["elevenlabs", "deepgram"] = "elevenlabs"
     deepgram_api_key: str | None = None
 
     # Text-to-speech
