@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
 
+    # Gemini Live API (spike — alternative realtime pipeline)
+    gemini_api_key: str | None = None
+    gemini_live_model: str = "gemini-3.1-flash-live-preview"
+
     # Persistence (optional — falls back to in-memory when unset). A
     # Supabase-hosted Postgres works here too: this is a direct asyncpg
     # connection string, not the Supabase client SDK, so there is no
