@@ -931,3 +931,57 @@ Backend: `uv run pytest -q` → 197/197 passed; `uv run ruff check .` → clean.
 
 ## Next action
 Whenever a real browser + mic (and ideally real provider keys) are available: follow `DEMO.md` end to end once as a genuine rehearsal, judge whether it feels conversational (latency), fix whatever actually breaks or feels off, then flip to `DONE`. This is also the point at which every other `VERIFIED`-not-`DONE` feature (05/08/10/11/12/13/14/15) gets its own live confirmation in the same pass.
+
+---
+
+# Feature 17 — Resizable interview panel
+
+## Status
+IMPLEMENTED
+
+## Priority
+P2
+
+## started_at
+2026-09-13
+
+## Current task
+Complete pending real-browser manual verification (see Verification).
+
+## Acceptance criteria
+- [x] panel width can be dragged via a handle on its left edge, like Chrome's built-in side panel
+- [x] width is clamped to a sensible range (320px–min(720px, 60% of viewport)) so it can't be dragged to unusable or page-swallowing sizes
+- [x] LeetCode's own page reflow (the `margin-right` on `<html>`) tracks the panel's width live while dragging, not just at rest
+- [x] the chosen width persists across page reloads/navigation (via `chrome.storage.local`)
+- [ ] confirmed by real-browser manual test that the drag feels smooth and LeetCode's layout doesn't jank (see Known issues/blockers)
+
+## Completed
+- `extension/src/content/layout.ts` — replaced the fixed `PANEL_WIDTH_PX` constant with `DEFAULT_PANEL_WIDTH_PX`/`MIN_PANEL_WIDTH_PX`, `getMaxPanelWidthPx(viewportWidth)`, `clampPanelWidth(width, viewportWidth)`, and `setPanelWidth(width, { animate })` (animated for mount/settle, unanimated while actively dragging so the reflow margin tracks the pointer instead of lagging by the transition's duration). `reservePageSpace`/`releasePageSpace` call sites in `content/index.tsx` are unchanged.
+- `extension/src/state/panelWidthStorage.ts` (new) — thin `chrome.storage.local` get/set wrapper for the persisted width, isolated into its own module so it can be `vi.mock`'d in the hook test (matching the existing `useMicrophoneCapture.test.ts` convention).
+- `extension/src/state/panelWidth.ts` (new) — `usePanelWidth()` hook: loads the persisted width on mount (clamped to the current viewport), and a `startResize` pointer-capture drag gesture (widen on drag-left, since the panel is right-anchored) that updates width live and persists once on release.
+- `extension/src/components/PanelResizeHandle.tsx` (new) — thin invisible-at-rest drag strip on the panel's left edge, accent-colored on hover/active, `cursor-col-resize`, `role="separator"`.
+- `extension/src/content/App.tsx` — wired `usePanelWidth()` in; the panel's own inline `width` style now follows the hook's `width` instead of the old fixed constant.
+- Unit tests: `content/layout.test.ts` (clamp/max-width math, 6 cases), `state/panelWidth.test.ts` (default width, restoring/clamping a persisted width, drag-to-widen + persist-on-release, clamping mid-drag, no longer reacting to pointer events after release — 5 cases).
+
+## Remaining
+- Real-browser manual verification (see Known issues/blockers) — this session had no live Chrome connected.
+
+## Files changed
+- `extension/src/content/layout.ts`, `extension/src/content/App.tsx`
+- `extension/src/state/panelWidth.ts` (new), `extension/src/state/panelWidthStorage.ts` (new)
+- `extension/src/components/PanelResizeHandle.tsx` (new)
+- `extension/src/content/layout.test.ts` (new), `extension/src/state/panelWidth.test.ts` (new)
+
+## Tests/checks run
+- `npm run --workspace extension test` — 81/81 pass (14 files, including the 11 new cases above)
+- `npm run --workspace extension typecheck` / `lint` / `build` — all pass, no new warnings
+
+## Verification
+IMPLEMENTED, not yet VERIFIED. All automated checks pass, but this session had no live Chrome browser connected (unlike Feature 02's verification session), so the actual drag feel, real-page reflow smoothness, and storage persistence across a genuine reload have not been confirmed against `leetcode.com`. Needs a manual pass: load the unpacked `dist/` build, drag the handle, reload the page, confirm the width stuck and the editor still reflows correctly.
+
+## Known issues/blockers
+- Not yet manually verified in a real browser (see Verification) — no functional defect known, just unconfirmed.
+- Minor, accepted trade-off: on mount, the panel briefly uses `DEFAULT_PANEL_WIDTH_PX` until the async `chrome.storage.local.get` resolves, so a customized width causes one small reflow jump shortly after page load rather than applying instantly. Not worth making the content script's `mount()` async to avoid this.
+
+## Next action
+Load the built extension in real Chrome against a LeetCode problem page and manually verify: drag smoothness, min/max clamping at the edges, and that the width survives a reload.
