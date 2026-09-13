@@ -1123,3 +1123,77 @@ Dockerfile/compose verified end-to-end locally (build → run → healthy → `/
 
 ## Next action
 Add Playwright screenshots to DEPLOY.md's load-unpacked section. Separately (not this feature): wire in real Anthropic/Deepgram/ElevenLabs keys on the live deployment when the user's ready, per DEPLOY.md §5.
+
+---
+
+# Feature 20 — Code quality cleanup
+
+## Status
+VERIFIED
+
+## Priority
+P2
+
+## started_at
+2026-09-13
+
+## Current task
+User asked for a full code-quality review ("duplicated code or bad code practices... scripts or tools we don't need anymore") after the Feature 17/18/19 worktrees were merged, then asked to fix everything found. Three parallel review agents (backend, extension, repo-wide/docs) reported; every "worth fixing" and "nice-to-have" finding from all three was then applied directly in this session.
+
+## Acceptance criteria
+- [x] backend: `_maybe_speak`'s check-LLM-call-accept sequence is race-safe against concurrent triggers (a per-session `asyncio.Lock`)
+- [x] backend: STT session is closed on real disconnect (not leaked for the whole grace window), and re-opened on `session.resume`
+- [x] backend: `is_candidate_speaking` (architecture.md §L rule 1) is actually wired from STT partial/final callbacks, not left at its unused default
+- [x] backend: LLM/TTS providers are resolved once per session and cached on `SessionRecord`, matching STT/persistence's existing lifecycle
+- [x] backend: `PostgresRepository` shares one module-level connection pool across sessions, matching `InMemoryRepository`'s shared-store pattern
+- [x] backend nice-to-haves: unused `supabase_url`/`supabase_service_role_key` settings dropped, unused `python-multipart` dependency dropped, empty `app/leetcode`/`app/services` packages deleted, Deepgram's relay-task cancel is awaited, the repeated "build event, seq=0, emit" shape collapsed into `_emit_new`, the duplicated transition-to-review logic collapsed into `_transition_to_review`
+- [x] extension: TTS `AudioContext` has a real `dispose()`, called from the hook's unmount cleanup and (module-level kill switch, mirroring mic/screen) from `content/index.tsx`'s `unmount()`
+- [x] extension: `stopAllScreenCapture()` is actually called from `content/index.tsx`'s `unmount()`, matching the mic kill switch
+- [x] extension: dead state removed — `state/types.ts`'s duplicate `InterviewStage`/`state.stage`/`"stage/set"`, `state.rubric`/`"rubric/update"`, and the unreachable `SessionStatus` `"paused"` value
+- [x] extension: `useScreenCapture().start()` returns `Promise<ScreenStatus>`, matching `useMicrophoneCapture().start()`'s outcome-gating contract
+- [x] extension: `useLiveInterviewEngine` no longer resubscribes to the socket every second (`elapsedSeconds` read via a ref, not a subscription-effect dependency)
+- [x] extension nice-to-haves: `StatusDot` shared primitive (Mic/Screen/Speaking/Connection badges), `getLastInterviewerMessage`/`usePanelAudioLevels` shared panel helpers, unused direct `zod` dependency dropped, `Rubric`'s dead default `label` prop removed, test coverage added for `MicBadge`/`ScreenBadge`/`StageBadge`/`StatusDot`
+- [x] docs: every stale "Feature 17" reference that actually meant Feature 19 (deployment/auth/Docker content) corrected across `config.py`, `test_session_auth_and_limits.py`, `manifest.ts`, `interviewSocket.ts`, `DEPLOY.md` (×2), `architecture.md` (×7); the one that meant Feature 18 (panel presets) corrected too; `architecture.md`'s PRD §17 miscite fixed to §7
+- [x] docs: `progress.md`'s milestone table (previously showing Features 09-16 as `PLANNED`) and top status banner reconciled against `FEATURE_PROGRESS.md`'s actual per-feature statuses; `README.md`'s "Project status" and doc-map table (missing `DEPLOY.md`) updated to mention Features 17-19
+- [x] worktree cleanup: `.claude/worktrees/{resizable-panel,interview-sidebar-design,idempotent-coalescing-kay}` directories and their local/remote branches removed now that all three are merged into `main`
+
+## Completed
+- `backend/app/websocket/interview.py`: added `SessionRecord.speak_lock`/`.is_candidate_speaking`/`.llm_provider`/`.tts_provider`; `_maybe_speak` now runs under the lock and passes `is_candidate_speaking` through; STT is closed on disconnect (`_close_stt_session_on_disconnect`) and re-opened on resume; LLM/TTS providers resolved once at `session.start` (construction failures caught, falling back to the old per-call factory path); added `_emit_new`/`_transition_to_review` helpers and migrated every call site to them.
+- `backend/app/persistence/postgres.py`: `_pool`/`_pool_lock`/`_get_shared_pool` are now module-level, shared by every `PostgresRepository` instance.
+- `backend/app/providers/stt/deepgram.py`: `close()` now awaits the cancelled relay task.
+- `backend/app/config.py`, `.env.example`, `architecture.md` §U: dropped unused `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`.
+- `backend/pyproject.toml`: dropped unused `python-multipart`; `backend/app/leetcode/`, `backend/app/services/` deleted (empty since the first scaffold commit).
+- `backend/tests/test_websocket_interview.py`: new tests for the disconnect-closes-STT fix, resume-reopens-STT, `is_candidate_speaking` gating (both the real-STT-callback path and `dev.simulate_transcript`'s mirrored set/clear), and the `speak_lock` race (two concurrent `_maybe_speak` calls against a slow fake LLM provider, only one accepted). `backend/tests/test_persistence.py`: replaced the stale per-instance-`_pool` assertion with a module-level-shared-pool test.
+- `extension/src/media/interviewerAudioPlayer.ts`: added `dispose()` (stops active sources, closes the `AudioContext`) and a module-level `stopAllInterviewerAudioPlayback()` kill switch, mirroring `microphone.ts`/`screen.ts`. `useInterviewerAudioPlayback.ts` calls `player.dispose()` on unmount. `content/index.tsx`'s `unmount()` now also calls `stopAllScreenCapture()` and `stopAllInterviewerAudioPlayback()`.
+- `extension/src/media/useScreenCapture.ts`: `start()` returns `Promise<ScreenStatus>`.
+- `extension/src/state/liveInterviewEngine.ts`: `elapsedSeconds` read via a ref inside the event handler; the subscription effect now only depends on `[socket, dispatch]`.
+- `extension/src/state/types.ts`/`interviewReducer.ts`: removed the dead `InterviewStage`/`state.stage`/`"stage/set"`, `state.rubric`/`"rubric/update"` (kept `INITIAL_RUBRIC` as a test fixture), and `SessionStatus`'s `"paused"` value; updated `StatusIndicator.tsx`/`InterviewPanel.tsx` accordingly.
+- `extension/src/components/StatusDot.tsx` (new), wired into `MicBadge`/`ScreenBadge`/`SpeakingBadge`/`ConnectionBadge`. `extension/src/components/panels/panelHelpers.ts` (new: `getLastInterviewerMessage`, `usePanelAudioLevels`), wired into `DockedPanel`/`FloatingPanel`/`SplitPanel`.
+- `extension/src/components/Rubric.tsx`: `label` is now a required prop (its one caller always passed one explicitly).
+- `extension/package.json`: dropped the unused direct `zod` dependency (`@ai-mock-interview/shared` already depends on it, so nothing changed at runtime — verified via a full rebuild).
+- New/updated tests: `MicBadge.test.tsx`, `ScreenBadge.test.tsx`, `StageBadge.test.tsx`, `StatusDot.test.tsx` (new); `useInterviewerAudioPlayback.test.ts` (dispose-on-unmount case + `dispose` added to the fake player), `interviewerAudioPlayer.test.ts` (four new `dispose()`/kill-switch cases), `useScreenCapture.test.ts` (return-type fix), `interviewReducer.test.ts`/`StatusIndicator.test.tsx`/`Rubric.test.tsx` (updated for the removed dead state/prop).
+- Docs: `Feature 17`→`19` across `backend/app/config.py`, `backend/tests/test_session_auth_and_limits.py`, `extension/src/manifest.ts`, `extension/src/networking/interviewSocket.ts`, `extension/.env.example`, `.env.example`, `DEPLOY.md` (×2), `architecture.md` (×7); one `Feature 17`→`18` in `architecture.md` (panel-presets addendum); `architecture.md`'s `PRD §17`→`§7` miscite. `progress.md`'s milestone table and top status banner reconciled against `FEATURE_PROGRESS.md`. `README.md`'s "Project status" and doc-map table updated.
+- Worktree cleanup: `git worktree list`/`git branch -a` confirmed only `main` remains (all three feature branches already deleted locally and on `origin` before this feature); the one leftover physical directory (`.claude/worktrees/interview-sidebar-design`, git's own bookkeeping already considered it removed) finished a long background `rm -rf` and is now gone.
+
+## Remaining
+Nothing outstanding from the three review agents' findings — every "worth fixing" and "nice-to-have" item was applied. Two items are explicitly *not* code-quality bugs and are tracked elsewhere: `DockedPanel`'s `SCREEN_STATUS_LABEL` vs. `ScreenBadge`'s label map (flagged as "legitimately different presentations, low risk" — left as-is) and the pre-existing `interviewStore.tsx` fast-refresh lint warning (Feature 01, unrelated).
+
+## Files changed
+- Backend: `app/websocket/interview.py`, `app/persistence/postgres.py`, `app/persistence/in_memory.py` (docstring only), `app/providers/stt/deepgram.py`, `app/config.py`, `pyproject.toml`, `uv.lock`; deleted `app/leetcode/`, `app/services/`; `tests/test_websocket_interview.py`, `tests/test_persistence.py`.
+- Extension: `src/media/interviewerAudioPlayer.ts` (+`.test.ts`), `src/media/useInterviewerAudioPlayback.ts` (+`.test.ts`), `src/media/useScreenCapture.ts` (+`.test.ts`), `src/state/liveInterviewEngine.ts`, `src/state/types.ts`, `src/state/interviewReducer.ts` (+`.test.ts`), `src/content/index.tsx`, `src/components/StatusIndicator.tsx` (+`.test.tsx`), `src/components/InterviewPanel.tsx`, `src/components/Rubric.tsx` (+`.test.tsx`), `src/components/StatusDot.tsx` (new, +`.test.tsx`), `src/components/MicBadge.tsx` (+`.test.tsx` new), `src/components/ScreenBadge.tsx` (+`.test.tsx` new), `src/components/SpeakingBadge.tsx`, `src/components/ConnectionBadge.tsx`, `src/components/StageBadge.test.tsx` (new), `src/components/panels/{DockedPanel,FloatingPanel,SplitPanel}.tsx`, `src/components/panels/panelHelpers.ts` (new), `package.json`.
+- Docs: `.env.example`, `extension/.env.example`, `architecture.md`, `DEPLOY.md`, `progress.md`, `README.md`.
+- Removed: `.claude/worktrees/{resizable-panel,interview-sidebar-design,idempotent-coalescing-kay}` (already gone from `git worktree list`/`git branch -a`; the one leftover physical directory finished deleting).
+
+## Tests/checks run
+- Backend: `uv run pytest -q` → 209/209 passed (up from 197; 12 new tests for the race/disconnect/is_candidate_speaking/shared-pool fixes). `uv run ruff check .` → clean.
+- Extension: `npm run --workspace extension test` → 152/152 passed (up from 138; 10 new tests for dispose/kill-switch/badges/StatusDot). `npm run --workspace extension typecheck` / `lint` / `build` → all pass, no new warnings.
+- `npm install` at the workspace root after removing `zod` from `extension/package.json` — resolves clean; `extension` build still succeeds (confirms `zod` still resolves transitively through `@ai-mock-interview/shared`, which declares it directly).
+
+## Verification
+All fixes are covered by passing automated tests written specifically to reproduce each finding's failure mode first (the race, the leak, the wiring gap) before confirming the fix. No manual/live-browser verification was needed for this feature — every change here is either a backend-testable fix, an extension-testable fix, or a documentation correction.
+
+## Known issues/blockers
+None. This feature is purely corrective — no new product behavior was added.
+
+## Next action
+None outstanding for this feature. Return to Feature 16/17/18's shared blocker: a human demo rehearsal in a real browser (`DEMO.md`), which is also the point at which Features 17/18 get their own manual verification.

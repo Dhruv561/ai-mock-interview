@@ -4,9 +4,11 @@ High-level project dashboard. Update after every meaningful work slice, per `CLA
 
 ---
 
-## Status: all 16 features at least VERIFIED — only a human demo rehearsal remains before MVP is DONE
+## Status: 19 features scoped, all at least IMPLEMENTED — a human demo rehearsal and two manual-verification passes remain before MVP is DONE
 
-Last updated: 2026-09-13
+Last updated: 2026-09-13 (Feature 20 — code quality cleanup)
+
+Three features were added after the "16 features" banner below was written (Features 17-19, all merged into `main` 2026-09-13): 17 (resizable panel, `IMPLEMENTED`) and 18 (panel layout presets/live transcript/audio meters, `IMPLEMENTED (not VERIFIED)`) both still need the same kind of real-browser manual pass Feature 16 below is waiting on; 19 (backend containerization/CI/CD, `VERIFIED`) is live on the user's own VPS with its auth gate confirmed externally. See the milestone table further down for the authoritative current status of all 19.
 
 > **Feature 16 (integration hardening + demo readiness) is now `VERIFIED`** (not `DONE` — the two things left are inherently things only a human can do: a real click-through rehearsal and a latency/feel judgement). Everything checkable from this environment was done directly (not blind-dispatched — this feature needs judgement calls, not just parallelizable slices), with two agents doing disjoint audit/docs work in parallel alongside it:
 >
@@ -87,6 +89,8 @@ TODO.md's Phase 6 scope was backend-only, and the extension's transcript panel w
 ## In progress
 
 Nothing blocking. Feature 08 remains `VERIFIED` rather than `DONE` only for want of an `ANTHROPIC_API_KEY` — the interviewer loop is proven live through `MockLLMProvider`, but `AnthropicLLMProvider`'s forced tool-use path is unexercised against the real API.
+
+**Feature 20 (Code quality cleanup) — VERIFIED.** Requested after the Feature 17/18/19 worktrees merged: three parallel review agents (backend/extension/repo-wide docs) audited the whole codebase for duplication, bad practices, and unused scripts/tools; every "worth fixing" and "nice-to-have" finding was then applied directly. Real bugs fixed: a race in `_maybe_speak` where two concurrent triggers could both bypass the interviewer's cooldown (now a per-session `asyncio.Lock`), a leaked STT connection on ungraceful disconnect, `is_candidate_speaking` (§L rule 1) never actually being wired from STT callbacks, per-session Postgres pools that were never shared or closed, and a leaked `AudioContext` on every LeetCode SPA navigation while TTS was in use. Also: dead reducer state removed (`stage/set`, `rubric/update`, `SessionStatus`'s unreachable `"paused"`), several small shared-helper extractions, an unused `zod` dependency and two empty backend packages deleted, and a doc-wide sweep fixing stale "Feature 17" references that actually meant 19 (or, once, 18) plus `progress.md`'s milestone table (previously stuck on Features 09-16 as `PLANNED`, contradicting `FEATURE_PROGRESS.md`). Backend 209/209 tests pass (12 new), extension 152/152 (14 new), both suites' lint/typecheck/build clean. Full detail in `FEATURE_PROGRESS.md` Feature 20.
 
 **Feature 19 (Backend containerization and CI/CD, renumbered from this branch's own "Feature 17" — merged into `main` 2026-09-13, well after Features 12–18 had already landed on it) — VERIFIED, backend is now live on the user's own VPS.** `backend/Dockerfile` + `docker-compose.yml` built and verified locally first; the backend now also has a judges-only auth gate (`SESSION_SHARED_SECRETS`, checked at the WS handshake before `accept()`) and two cost-control limits (`MAX_CONCURRENT_SESSIONS`, `SESSION_MAX_DURATION_SECONDS`) — all default to off, so nothing changed for local dev; covered by `backend/tests/test_session_auth_and_limits.py` (7 tests; 126/126 at the time this was built, re-verified post-merge at 204/204).
 
@@ -184,17 +188,18 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 | 06 | Interview WebSocket session | VERIFIED | P0 |
 | 07 | Interview state machine | DONE | P0 |
 | 08 | AI interviewer | VERIFIED | P0 |
-| 09 | Code analysis | PLANNED | P1 |
-| 10 | ElevenLabs interviewer voice | PLANNED | P0 |
-| 11 | Tiered hints | PLANNED | P1 |
-| 12 | Screen/tab recording | PLANNED | P1 |
-| 13 | Live rubric | PLANNED | P1 |
-| 14 | End interview and review | PLANNED | P0 |
-| 15 | Persistence | PLANNED | P1 |
-| 16 | Integration hardening and demo readiness | PLANNED | P0 |
+| 09 | Code analysis | VERIFIED (not DONE) | P1 |
+| 10 | ElevenLabs interviewer voice | VERIFIED (not DONE) | P0 |
+| 11 | Tiered hints | VERIFIED (not DONE) | P1 |
+| 12 | Screen/tab recording | VERIFIED (not DONE) | P1 |
+| 13 | Live rubric | VERIFIED (not DONE) | P1 |
+| 14 | End interview and review | VERIFIED (not DONE) | P0 |
+| 15 | Persistence | VERIFIED (not DONE) | P1 |
+| 16 | Integration hardening and demo readiness | VERIFIED (not DONE) | P0 |
 | 17 | Resizable interview panel | IMPLEMENTED | P2 |
 | 18 | Panel layout presets, live candidate transcript, audio level meters | IMPLEMENTED (not VERIFIED) | P1 |
 | 19 | Backend containerization and CI/CD | VERIFIED | P1 |
+| 20 | Code quality cleanup | VERIFIED | P2 |
 
 ## Decisions log (Phase 6 addendum / transport fix)
 
