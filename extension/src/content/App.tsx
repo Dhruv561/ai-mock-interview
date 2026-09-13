@@ -49,9 +49,14 @@ function PanelShell() {
   }, [isFloating]);
 
   if (isFloating) {
+    // No card/border/background here — the design (1b) floats the message
+    // bubble and control pill as two independent pieces, each with its own
+    // shadow/blur, not one shared panel card wrapping both. This container
+    // exists only to center and width-limit them, matching the design's
+    // 720px-wide floating column, centered at `bottom: 26px`.
     return (
       <div className="fixed inset-x-0 bottom-6 z-[2147483000] flex justify-center px-6">
-        <div className="w-full max-w-2xl rounded-2xl border border-panel-border bg-panel-bg font-sans text-[13px] text-ink shadow-lg">
+        <div className="flex w-full max-w-[720px] flex-col items-center font-sans text-[13px] text-ink">
           <InterviewPanel layout={layout} setLayout={setLayout} />
         </div>
       </div>
