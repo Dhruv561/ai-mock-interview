@@ -90,9 +90,9 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 9 — Final review (Feature 14)
 
-- [ ] `agents/evaluator.py`: full-session evidence-grounded review generation
-- [ ] Evidence-id verification pass (reject/retry once if a cited id doesn't exist in the record)
-- [ ] `Review.tsx` wired to `review.ready`
+- [x] `agents/evaluator.py`: full-session evidence-grounded review generation
+- [x] Evidence-id verification pass (reject/retry once if a cited id doesn't exist in the record)
+- [x] `Review.tsx` wired to `review.ready`
 
 ## Phase 10 — Screen recording + polish (Feature 12)
 

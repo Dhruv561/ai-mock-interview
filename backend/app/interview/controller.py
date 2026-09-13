@@ -83,7 +83,7 @@ class InterviewController:
                 action.stage_transition
             ):
                 return None
-            self.state.transition_to(action.stage_transition)
+            self.state.transition_to(action.stage_transition, now=now)
             if action.message:
                 self._last_spoke_at = now
             self._apply_rubric_updates(action, now=now)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { interviewReducer } from "./interviewReducer";
-import { INITIAL_STATE, type TranscriptMessage } from "./types";
+import { INITIAL_STATE, type FinalReview, type TranscriptMessage } from "./types";
 
 describe("interviewReducer", () => {
   it("session/start resets to a clean recording state", () => {
@@ -61,5 +61,21 @@ describe("interviewReducer", () => {
     });
     expect(next.hints).toHaveLength(1);
     expect(next.hints[0].level).toBe(1);
+  });
+
+  it("review/ready stores the evidence-backed review as-is", () => {
+    const review: FinalReview = {
+      overallScore: 7.8,
+      rubric: INITIAL_STATE.rubric,
+      strengths: [{ text: "Asked clarifying questions early.", evidenceIds: ["t1"] }],
+      areasToImprove: [{ text: "Didn't state complexity unprompted.", evidenceIds: ["t2"] }],
+      timeline: [{ label: "Interview ended", elapsedSeconds: 120 }],
+      evidence: [
+        { id: "t1", kind: "transcript", text: "What about duplicate values?" },
+        { id: "t2", kind: "transcript", text: "I think it's fast enough." },
+      ],
+    };
+    const next = interviewReducer(INITIAL_STATE, { type: "review/ready", review });
+    expect(next.review).toBe(review);
   });
 });

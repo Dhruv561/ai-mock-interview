@@ -81,3 +81,42 @@ def test_default_state_starts_at_intro_with_empty_fields():
         "communication": 0,
         "testing": 0,
     }
+    assert state.started_at == 0.0
+    assert state.stage_history == []
+
+
+# --- started_at / stage_history (Feature 14, architecture.md §P) ---
+
+
+def test_started_at_is_set_explicitly_by_the_caller():
+    state = InterviewState(problem=PROBLEM, language="python", started_at=1000.0)
+    assert state.started_at == 1000.0
+
+
+def test_transition_to_appends_a_stage_history_entry_with_the_given_timestamp():
+    state = make_state("intro")
+    state.transition_to("clarification", now=42.0)
+    assert len(state.stage_history) == 1
+    assert state.stage_history[0].stage == "clarification"
+    assert state.stage_history[0].timestamp == 42.0
+
+
+def test_transition_to_accumulates_stage_history_in_order():
+    state = make_state("intro")
+    state.transition_to("clarification", now=10.0)
+    state.transition_to("approach", now=20.0)
+    assert [entry.stage for entry in state.stage_history] == ["clarification", "approach"]
+    assert [entry.timestamp for entry in state.stage_history] == [10.0, 20.0]
+
+
+def test_rejected_transition_does_not_append_stage_history():
+    state = make_state("intro")
+    with pytest.raises(IllegalTransitionError):
+        state.transition_to("coding", now=5.0)
+    assert state.stage_history == []
+
+
+def test_transition_to_defaults_now_to_zero_for_callers_that_do_not_care():
+    state = make_state("intro")
+    state.transition_to("clarification")
+    assert state.stage_history[0].timestamp == 0.0

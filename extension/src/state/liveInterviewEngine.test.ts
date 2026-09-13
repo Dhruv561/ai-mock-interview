@@ -86,6 +86,60 @@ describe("useLiveInterviewEngine", () => {
     expect(result.current.hints[0].level).toBe(3);
   });
 
+  it("translates review.ready's snake_case FinalReview into the client's camelCase shape", () => {
+    const { result, emit } = renderEngine(120);
+
+    act(() =>
+      emit({
+        type: "review.ready",
+        seq: 1,
+        review: {
+          overall_score: 7.8,
+          rubric: {
+            clarifying: 3,
+            approach: 2,
+            code_quality: 2,
+            complexity: 1,
+            communication: 2,
+            testing: 1,
+          },
+          strengths: [
+            { text: "Asked clarifying questions early.", evidence_ids: ["t1"] },
+          ],
+          areas_to_improve: [
+            { text: "Didn't state complexity unprompted.", evidence_ids: ["t2"] },
+          ],
+          timeline: [{ label: "Interview ended", elapsed_seconds: 120 }],
+          evidence: [
+            { id: "t1", kind: "transcript", text: "What about duplicate values?" },
+            { id: "t2", kind: "transcript", text: "I think it's fast enough." },
+          ],
+        },
+      }),
+    );
+
+    expect(result.current.review).toEqual({
+      overallScore: 7.8,
+      rubric: {
+        clarifying: 3,
+        approach: 2,
+        code_quality: 2,
+        complexity: 1,
+        communication: 2,
+        testing: 1,
+      },
+      strengths: [{ text: "Asked clarifying questions early.", evidenceIds: ["t1"] }],
+      areasToImprove: [
+        { text: "Didn't state complexity unprompted.", evidenceIds: ["t2"] },
+      ],
+      timeline: [{ label: "Interview ended", elapsedSeconds: 120 }],
+      evidence: [
+        { id: "t1", kind: "transcript", text: "What about duplicate values?" },
+        { id: "t2", kind: "transcript", text: "I think it's fast enough." },
+      ],
+    });
+  });
+
   it("ignores unrelated event types", () => {
     const { result, emit } = renderEngine();
 

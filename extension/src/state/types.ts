@@ -1,7 +1,7 @@
 // Interview UI state types. Mirrors the shape of architecture.md §G's event
-// catalogue closely enough that swapping the mock engine (state/mockEngine.ts)
-// for the real WebSocket client (networking/websocket.ts) in a later phase
-// should only require translating server events into these same actions.
+// catalogue closely enough that translating real server events
+// (networking/websocket.ts) into these same actions is a thin, mechanical
+// step — see state/liveInterviewEngine.ts, which does exactly that.
 
 export type InterviewStage =
   | "intro"
@@ -62,12 +62,33 @@ export interface TimelineEvent {
   elapsedSeconds: number;
 }
 
+// Mirrors shared/events.ts's evidenceItemSchema/evidenceKindSchema — one
+// traceable fact from the interview record that a ReviewPoint can cite.
+export type EvidenceKind = "transcript" | "code_analysis" | "hint" | "rubric" | "stage";
+
+export interface EvidenceItem {
+  id: string;
+  kind: EvidenceKind;
+  text: string;
+}
+
+// A single strength/area-to-improve bullet. evidenceIds point into the
+// enclosing FinalReview.evidence array (mirrors reviewPointSchema) — the
+// backend guarantees every id resolves; the UI still defends against a
+// stray one rather than trusting that blindly (CLAUDE.md "no silent
+// fallbacks that hide errors").
+export interface ReviewPoint {
+  text: string;
+  evidenceIds: string[];
+}
+
 export interface FinalReview {
   overallScore: number; // 0-10
   rubric: RubricState;
-  strengths: string[];
-  areasToImprove: string[];
+  strengths: ReviewPoint[];
+  areasToImprove: ReviewPoint[];
   timeline: TimelineEvent[];
+  evidence: EvidenceItem[];
 }
 
 export interface InterviewUIState {

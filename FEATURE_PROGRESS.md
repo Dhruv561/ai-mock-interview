@@ -777,7 +777,7 @@ Whenever a real `ANTHROPIC_API_KEY` is available: run a real interview, confirm 
 # Feature 14 — End interview and review
 
 ## Status
-IN_PROGRESS
+VERIFIED (not DONE — see Verification)
 
 ## Priority
 P0
@@ -786,25 +786,47 @@ P0
 2026-09-13
 
 ## Current task
-Building in two parallel slices: (1) backend `agents/evaluator.py` (evidence-grounded review generation from `InterviewState`, reject/retry-once on an invalid evidence citation, wired into `session.end`); (2) extension `Review.tsx`/`state/` wiring to the real `review.ready` event, replacing `mockEngine.ts`'s hardcoded placeholder. Both build against the `FinalReview`/`ReviewPoint`/`EvidenceItem` contract already committed ahead of time in `schemas.py`/`shared/events.ts`.
+Complete except the same "needs a real LLM key" gap as Features 08/11/13: fully implemented and exercised via the mock provider (which deterministically parses evidence back out of its own prompt to build a genuinely evidence-grounded review, not a hardcoded one), but a real Anthropic-generated review's actual quality is unverified live.
 
 ## Acceptance criteria
-- [ ] interview can end cleanly
-- [ ] final analysis is generated
-- [ ] overall score is calculated
-- [ ] strengths are evidence-backed
-- [ ] weaknesses are evidence-backed
-- [ ] important moments are shown chronologically
-- [ ] final UI matches product style
+- [x] interview can end cleanly — `session.end` transitions to `review` and now also generates/emits the review
+- [x] final analysis is generated — `agents/evaluator.py`'s `generate_final_review`, wired into `session.end`
+- [x] overall score is calculated — `FinalReview.overall_score`, LLM-produced from the evidence list
+- [x] strengths are evidence-backed — `ReviewPoint.evidence_ids`, schema-enforced non-empty and validated to resolve
+- [x] weaknesses are evidence-backed — same mechanism for `areas_to_improve`
+- [x] important moments are shown chronologically — new `InterviewState.stage_history` + `started_at`, `timeline` built from real elapsed seconds (computed in Python, not trusted to the LLM)
+- [x] final UI matches product style — `Review.tsx` redesigned to surface evidence as a muted secondary line per bullet, matching this panel's existing restrained-tool aesthetic (no citations modal, no gamification)
 
 ## Completed
-- `FinalReview`/`ReviewPoint`/`EvidenceItem` schema (`backend/app/interview/schemas.py`, `shared/events.ts`), with a cross-field validator (Pydantic `model_validator` / Zod `.refine`) rejecting any review whose `evidence_ids` don't resolve into its own `evidence` list.
+Built as two parallel slices against a contract (`FinalReview`/`ReviewPoint`/`EvidenceItem`) pre-staged and committed ahead of time (same pattern as Feature 10), so both agents worked with zero file overlap — no worktree isolation needed this time. See `architecture.md` §P's "Implementation notes" for the full backend design (evidence-id scheme `f"{kind}-{index}"`, retry-once-on-bad-citation, the `review.ready` vs. degraded-`error`-event failure-mode choice).
+
+**Backend:** `agents/evaluator.py` (`build_evidence`, `generate_final_review`), `interview/evaluator_prompts.py` (separate from the interviewer's own prompts), `providers/llm/{base,mock,anthropic}.py` gain `propose_review`, `interview/state.py` gains `started_at`/`stage_history`, `websocket/interview.py`'s `SessionEndEvent` branch generates and emits `review.ready` (or a recoverable `error` if generation fails twice).
+
+**Extension:** `state/types.ts`'s `FinalReview` now mirrors the evidence-backed contract; `state/mockEngine.ts` (the Feature 02 placeholder) is deleted outright — its one export had no other callers; `state/liveInterviewEngine.ts` translates the real `review.ready` event; `InterviewPanel.tsx` shows a small "GENERATING REVIEW…" state (reusing `StatusIndicator`'s existing convention) for the gap between `session.end` and `review.ready` arriving; `Review.tsx` resolves each point's `evidenceIds` against a `Map` built from `review.evidence` and shows a quoted secondary line under each bullet.
 
 ## Remaining
-- Backend evaluator + wiring, frontend Review.tsx wiring (in progress).
+- Real-LLM verification (see Current task) — same class of gap as Features 08/11/13.
+
+## Files changed
+- `backend/app/agents/evaluator.py` (new), `backend/app/interview/evaluator_prompts.py` (new), `backend/app/interview/{state,controller}.py`, `backend/app/providers/llm/{base,mock,anthropic}.py`, `backend/app/websocket/interview.py`
+- `backend/tests/test_evaluator.py` (new), `backend/tests/{test_interview_state,test_websocket_interview}.py`
+- `extension/src/state/{types,liveInterviewEngine}.ts`, `extension/src/state/mockEngine.ts` (deleted), `extension/src/components/{Review,InterviewPanel}.tsx`, `extension/src/components/Review.test.tsx` (new), `extension/src/state/{interviewReducer.test,liveInterviewEngine.test}.ts`
+- `backend/app/interview/schemas.py`, `shared/events.ts` (the pre-staged contract commit)
+- `architecture.md`, `FEATURE_PROGRESS.md`, `progress.md`, `TODO.md`
+
+## Tests/checks run
+- `uv run ruff check .` (backend) — all checks passed.
+- `uv run pytest -q` (backend) — 182 passed.
+- `npm run --workspace extension test` — 17 files, 91 tests passed.
+- `npm run --workspace extension typecheck` — clean.
+- `npm run --workspace extension lint` — clean (one pre-existing, unrelated warning in `state/interviewStore.tsx`).
+- `npm run --workspace extension build` — succeeds.
+
+## Known issues/blockers
+None beyond the live-LLM gap above.
 
 ## Next action
-Merge both slices, run full backend + extension test/typecheck/lint/build, update this record.
+Whenever a real `ANTHROPIC_API_KEY` is available: run a full interview end-to-end, confirm the generated review's strengths/areas actually reference real things that happened in that specific session (not generic statements) and that citations read sensibly in the UI — then flip Features 08/11/13/14 to `DONE` together. After that, Phase 10 (screen recording, Feature 12) and Phase 11 (persistence, Features 15/16) are what's left per `TODO.md`.
 
 ---
 

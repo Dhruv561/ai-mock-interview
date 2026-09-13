@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
 import app.websocket.interview as ws_module
+from app.interview.schemas import FinalReview
+from app.interview.state import TranscriptEntry
 from app.main import app
 
 client = TestClient(app)
@@ -282,7 +284,11 @@ def test_session_end_transitions_to_review_and_is_idempotent():
         assert stage_event["type"] == "interviewer.state"
         assert stage_event["stage"] == "review"
 
-        # a second session.end must not crash or emit a duplicate transition
+        review_event = ws.receive_json()
+        assert review_event["type"] == "review.ready"
+
+        # a second session.end must not crash, emit a duplicate transition,
+        # or regenerate/re-emit a second review
         ws.send_json({"type": "session.end"})
         ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
         error = ws.receive_json()
@@ -443,6 +449,61 @@ def test_accepted_action_with_rubric_updates_emits_rubric_updated_event():
     assert record.state.rubric["complexity"] == 1
 
 
+def test_session_end_produces_review_ready_with_valid_final_review():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        record = ws_module.sessions.get(session_id)
+        # Seed transcript + hint activity directly onto state (same
+        # test-fixture pattern as the `record.state.stage = ...` poke in
+        # test_accepted_action_with_rubric_updates_emits_rubric_updated_event) —
+        # replaying a full, cooldown-respecting real-time interview here
+        # would take real wall-clock minutes (MIN_COOLDOWN_SECONDS); this
+        # test only needs transcript/hint/rubric/stage evidence to actually
+        # exist by the time session.end runs.
+        record.state.transcript.append(
+            TranscriptEntry(speaker="candidate", text="I'd use a hash map.", timestamp=1.0)
+        )
+        record.state.hint_level = 1
+        record.state.recent_interviewer_actions.append("hint (level 1): Think about hash maps.")
+
+        # Jump directly into "complexity" (bypassing transition legality,
+        # same as the rubric test above) so the mock LLM's canned
+        # complexity response — which carries rubric_updates — fires on
+        # the very first interviewer speak of this session (no cooldown
+        # has elapsed yet to block it).
+        record.state.stage = "complexity"
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        ws.receive_json()  # interviewer.transcript
+        ws.receive_json()  # interviewer.audio.start
+        ws.receive_json()  # interviewer.audio.end
+        rubric_event = ws.receive_json()
+        assert rubric_event["type"] == "rubric.updated"
+
+        ws.send_json({"type": "session.end"})
+        stage_event = ws.receive_json()
+        assert stage_event["type"] == "interviewer.state"
+        assert stage_event["stage"] == "review"
+
+        review_event = ws.receive_json()
+        assert review_event["type"] == "review.ready"
+
+    # FinalReview's own model_validator (schemas.py) re-checks every cited
+    # evidence id resolves — round-tripping through it here is a schema
+    # + evidence-grounding check, not just a "some dict came back" check.
+    review = FinalReview.model_validate(review_event["review"])
+    kinds = {item.kind for item in review.evidence}
+    assert kinds == {"transcript", "hint", "rubric", "stage"}
+    known_ids = {item.id for item in review.evidence}
+    for point in (*review.strengths, *review.areas_to_improve):
+        assert set(point.evidence_ids).issubset(known_ids)
+
+
 def test_review_stage_never_speaks_again():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
@@ -453,6 +514,7 @@ def test_review_stage_never_speaks_again():
         ws.send_json({"type": "session.end"})
         stage_event = ws.receive_json()
         assert stage_event["stage"] == "review"
+        ws.receive_json()  # review.ready
 
         ws.send_json(
             {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}

@@ -9,10 +9,11 @@ function clampHintLevel(level: number): 1 | 2 | 3 {
 }
 
 /**
- * Drives the transcript from real backend events (Feature 08) — replaces
- * the scripted timeline that used to live in mockEngine.ts, now that the
- * backend genuinely produces interviewer.transcript/hint.response/
- * transcript.final. transcript.partial (mid-speech) is intentionally not
+ * Drives the transcript and final review from real backend events
+ * (Features 08 and 14) — replaces the scripted timeline and hardcoded
+ * review that used to live in mockEngine.ts, now that the backend
+ * genuinely produces interviewer.transcript/hint.response/transcript.final/
+ * review.ready. transcript.partial (mid-speech) is intentionally not
  * rendered here: TranscriptMessage has no "update in place" concept, and
  * appending a new message per partial would spam near-duplicates — only
  * the finished utterance is shown.
@@ -62,6 +63,37 @@ export function useLiveInterviewEngine(
                 speaker: "candidate",
                 elapsedSeconds,
                 text: event.text,
+              },
+            });
+            break;
+
+          // Snake_case backend FinalReview -> camelCase client FinalReview
+          // (state/types.ts), same translation discipline as every other
+          // case here — the client type exists so the rest of the UI never
+          // has to think in the wire format.
+          case "review.ready":
+            dispatch({
+              type: "review/ready",
+              review: {
+                overallScore: event.review.overall_score,
+                rubric: event.review.rubric,
+                strengths: event.review.strengths.map((point) => ({
+                  text: point.text,
+                  evidenceIds: point.evidence_ids,
+                })),
+                areasToImprove: event.review.areas_to_improve.map((point) => ({
+                  text: point.text,
+                  evidenceIds: point.evidence_ids,
+                })),
+                timeline: event.review.timeline.map((entry) => ({
+                  label: entry.label,
+                  elapsedSeconds: entry.elapsed_seconds,
+                })),
+                evidence: event.review.evidence.map((item) => ({
+                  id: item.id,
+                  kind: item.kind,
+                  text: item.text,
+                })),
               },
             });
             break;

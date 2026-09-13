@@ -27,6 +27,7 @@ from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
 from app.agents.code_analyser import analyse_code
+from app.agents.evaluator import generate_final_review
 from app.agents.interviewer import propose_interviewer_action
 from app.config import Settings, get_settings
 from app.interview.controller import InterviewController
@@ -43,6 +44,7 @@ from app.interview.schemas import (
     InterviewerStateEvent,
     InterviewerTranscriptEvent,
     ProblemInfo,
+    ReviewReadyEvent,
     RubricUpdatedEvent,
     SessionEndEvent,
     SessionResumeEvent,
@@ -103,9 +105,9 @@ class SessionRegistry:
     def __init__(self) -> None:
         self._sessions: dict[str, SessionRecord] = {}
 
-    def create(self, problem: ProblemInfo, language: str) -> SessionRecord:
+    def create(self, problem: ProblemInfo, language: str, *, started_at: float) -> SessionRecord:
         session_id = str(uuid.uuid4())
-        state = InterviewState(problem=problem, language=language)
+        state = InterviewState(problem=problem, language=language, started_at=started_at)
         controller = InterviewController(state)
         record = SessionRecord(session_id=session_id, state=state, controller=controller)
         self._sessions[session_id] = record
@@ -259,6 +261,46 @@ async def _maybe_speak(
         await _emit(record, rubric_event.model_dump())
 
 
+async def _generate_and_emit_review(record: SessionRecord, settings: Settings) -> None:
+    """Feature 14 / architecture.md §P: generates the evidence-grounded
+    final review and emits it as review.ready. Called once, right after
+    session.end transitions the session into "review" (see the
+    SessionEndEvent branch above).
+
+    Failure handling deliberately mirrors the STT-failure pattern
+    elsewhere in this file (log + send an explicit, recoverable ErrorEvent)
+    rather than _speak_audio's silent-swallow pattern: TTS can degrade
+    silently because the interviewer's text has already reached the client
+    by the time synthesis is attempted, so there's already a usable
+    fallback (text without audio). Here there is no fallback content
+    already delivered — if review generation fails outright (both
+    evaluator attempts invalid, or the provider unreachable), the client's
+    Review UI would otherwise wait forever for a review.ready that never
+    arrives. The interview must still end cleanly (architecture.md §P /
+    CLAUDE.md STOP-safety), so this logs and notifies rather than raising
+    out of the WS handler."""
+    try:
+        provider = get_llm_provider(settings)
+        final_review = await generate_final_review(record.state, provider)
+    except Exception:
+        # Broad on purpose (same as the STT-send failure handler above):
+        # FinalReviewGenerationError (both evaluator attempts invalid) and
+        # any provider-transport failure must both degrade the same way —
+        # the interview session must survive either.
+        logger.exception("Final review generation failed; interview still ends")
+        error_event = ErrorEvent(
+            seq=0,
+            code="review_generation_failed",
+            message="Could not generate the final review for this session.",
+            recoverable=True,
+        )
+        await _emit(record, error_event.model_dump())
+        return
+
+    review_event = ReviewReadyEvent(seq=0, review=final_review)
+    await _emit(record, review_event.model_dump())
+
+
 def _make_transcript_callbacks(session_id: str, settings: Settings):
     """STT provider callbacks close over a session_id, not a SessionRecord
     or WebSocket, so they keep working correctly even if the session has
@@ -354,7 +396,9 @@ async def interview_socket(ws: WebSocket) -> None:
                 continue
 
             if isinstance(client_event, SessionStartEvent):
-                record = sessions.create(client_event.problem, client_event.language)
+                record = sessions.create(
+                    client_event.problem, client_event.language, started_at=time.time()
+                )
                 record.active_ws = ws
                 on_partial, on_final = _make_transcript_callbacks(record.session_id, settings)
                 try:
@@ -447,10 +491,17 @@ async def interview_socket(ws: WebSocket) -> None:
                 if record.stt_session is not None:
                     await record.stt_session.close()
                     record.stt_session = None
+                # Guarded by the same "not already in review" check as the
+                # transition itself: a repeated session.end must stay
+                # idempotent (test_session_end_transitions_to_review_and_is_idempotent),
+                # so the final review is generated and emitted at most once
+                # per session, not regenerated on every extra session.end.
                 if record.state.stage != "review":
-                    record.state.transition_to("review")
+                    now = time.time()
+                    record.state.transition_to("review", now=now)
                     stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
                     await _emit(record, stage_event.model_dump())
+                    await _generate_and_emit_review(record, settings)
                 record.last_seen = time.monotonic()
                 continue
 

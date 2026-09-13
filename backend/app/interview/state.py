@@ -45,6 +45,17 @@ class TranscriptEntry(BaseModel):
     timestamp: float
 
 
+class StageHistoryEntry(BaseModel):
+    """One append-only record of a stage transition actually taking effect
+    (architecture.md §P — the evaluator's "stage timeline" input). Recorded
+    by transition_to itself so every caller (controller.py, websocket/
+    interview.py's session.end handler) gets it for free rather than each
+    call site having to remember to log it separately."""
+
+    stage: InterviewStage
+    timestamp: float
+
+
 class RubricEvidenceEntry(BaseModel):
     """One append-only record of a rubric change (architecture.md §O). Only
     the categories actually touched by that change are present, each already
@@ -85,11 +96,26 @@ class InterviewState(BaseModel):
     hint_level: int = 0
     recent_interviewer_actions: list[str] = Field(default_factory=list)
     code_analysis_observations: list[str] = Field(default_factory=list)
+    # Wall-clock time the session was created (architecture.md §P needs an
+    # anchor to derive each stage transition's elapsed_seconds from). Always
+    # set explicitly by the caller at session creation
+    # (websocket/interview.py's SessionRegistry.create, via time.time()) —
+    # never generated in here, to keep this module free of hidden I/O. The
+    # 0.0 default only matters for tests/direct construction that don't care
+    # about real timing.
+    started_at: float = 0.0
+    stage_history: list[StageHistoryEntry] = Field(default_factory=list)
 
     def can_transition_to(self, target: InterviewStage) -> bool:
         return target in _TRANSITIONS[self.stage]
 
-    def transition_to(self, target: InterviewStage) -> None:
+    def transition_to(self, target: InterviewStage, *, now: float = 0.0) -> None:
+        """`now` is threaded through from the caller (same discipline as
+        controller.py's `_last_spoke_at`/rubric_history timestamps) rather
+        than read from the clock in here — see the module docstring. The
+        0.0 default keeps existing call sites that don't care about timing
+        (e.g. test fixtures) working without having to pass one."""
         if not self.can_transition_to(target):
             raise IllegalTransitionError(self.stage, target)
         self.stage = target
+        self.stage_history.append(StageHistoryEntry(stage=target, timestamp=now))

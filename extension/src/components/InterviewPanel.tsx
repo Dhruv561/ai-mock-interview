@@ -5,7 +5,6 @@ import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
 import { useLiveInterviewEngine } from "../state/liveInterviewEngine";
 import { useInterview } from "../state/interviewStore";
-import { buildMockReview } from "../state/mockEngine";
 import { EndReviewButton } from "./EndReviewButton";
 import { HintButton } from "./HintButton";
 import { MicBadge } from "./MicBadge";
@@ -21,12 +20,11 @@ const MAX_HINT_LEVEL = 3;
 
 /**
  * Top-level panel. The transcript (interviewer questions, hints, candidate
- * speech) is driven by real backend events via state/liveInterviewEngine.ts
- * (Feature 08) — session.start now fires from handleStart below, not
- * automatically on page load (see content/interviewSession.ts), so nothing
- * the interviewer says can arrive before the candidate has actually
- * started. The final review is still state/mockEngine.ts's hardcoded
- * placeholder until Feature 14 exists.
+ * speech) and the final review are both driven by real backend events via
+ * state/liveInterviewEngine.ts (Features 08 and 14) — session.start now
+ * fires from handleStart below, not automatically on page load (see
+ * content/interviewSession.ts), so nothing the interviewer says can arrive
+ * before the candidate has actually started.
  */
 export function InterviewPanel() {
   const { state, dispatch } = useInterview();
@@ -50,11 +48,11 @@ export function InterviewPanel() {
     mic.stop();
     socket.send({ type: "session.end" });
     endInterviewSession();
+    // status flips to "ended" immediately as local UI feedback; the review
+    // itself arrives slightly later via review.ready (see
+    // useLiveInterviewEngine) once the backend finishes evaluating the
+    // session, so state.review stays null in between.
     dispatch({ type: "session/end" });
-    dispatch({
-      type: "review/ready",
-      review: buildMockReview(state.rubric, state.elapsedSeconds),
-    });
   }
 
   return (
@@ -89,6 +87,22 @@ export function InterviewPanel() {
 
       {state.status === "ended" && state.review && (
         <Review review={state.review} onRestart={handleStart} />
+      )}
+
+      {/*
+       * review.ready lags session.end by however long the backend's
+       * evaluator call takes — this bridges that gap rather than rendering
+       * a blank panel. Reuses StatusIndicator's existing dot+label
+       * convention instead of inventing a new spinner (minimal-animation
+       * rule, CLAUDE.md §9).
+       */}
+      {state.status === "ended" && !state.review && (
+        <div className="flex flex-1 items-center justify-center gap-2 px-5 py-5">
+          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" aria-hidden />
+          <span className="font-mono text-[11px] tracking-wider text-ink-faint">
+            GENERATING REVIEW…
+          </span>
+        </div>
       )}
     </div>
   );
