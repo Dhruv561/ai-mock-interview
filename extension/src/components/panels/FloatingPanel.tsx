@@ -1,10 +1,10 @@
-import { useAudioLevels } from "../../media/useAudioLevels";
 import { formatElapsed } from "../../utils/format";
 import { AudioLevelMeter } from "../AudioLevelMeter";
 import { EndReviewButton } from "../EndReviewButton";
 import { HintButton } from "../HintButton";
 import { MuteButton } from "../MuteButton";
 import { STAGE_LABELS } from "../stageInfo";
+import { getLastInterviewerMessage, usePanelAudioLevels } from "./panelHelpers";
 import type { PanelBodyProps } from "./PanelBodyProps";
 
 /**
@@ -29,11 +29,15 @@ export function FloatingPanel({
   hintDisabled,
   onEnd,
 }: PanelBodyProps) {
-  const ttsLevels = useAudioLevels(getTtsAnalyser, isSpeaking);
-  const micLevels = useAudioLevels(getMicAnalyser, micStatus === "active");
+  const { ttsLevels, micLevels } = usePanelAudioLevels({
+    getTtsAnalyser,
+    isSpeaking,
+    getMicAnalyser,
+    micStatus,
+  });
   const activeLevels = isSpeaking ? ttsLevels : micLevels;
 
-  const lastInterviewerMessage = [...state.messages].reverse().find((m) => m.speaker === "interviewer");
+  const lastInterviewerMessage = getLastInterviewerMessage(state.messages);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 bg-panel-bg p-4">

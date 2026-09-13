@@ -1,4 +1,3 @@
-import { useAudioLevels } from "../../media/useAudioLevels";
 import { AudioLevelMeter } from "../AudioLevelMeter";
 import { EndReviewButton } from "../EndReviewButton";
 import { HintButton } from "../HintButton";
@@ -8,6 +7,7 @@ import { ScreenBadge } from "../ScreenBadge";
 import { SpeakingBadge } from "../SpeakingBadge";
 import { StageBadge } from "../StageBadge";
 import { Transcript } from "../Transcript";
+import { usePanelAudioLevels } from "./panelHelpers";
 import type { PanelBodyProps } from "./PanelBodyProps";
 
 /**
@@ -38,8 +38,12 @@ export function SplitPanel({
   hintDisabled,
   onEnd,
 }: PanelBodyProps) {
-  const ttsLevels = useAudioLevels(getTtsAnalyser, isSpeaking);
-  const micLevels = useAudioLevels(getMicAnalyser, micStatus === "active");
+  const { ttsLevels, micLevels } = usePanelAudioLevels({
+    getTtsAnalyser,
+    isSpeaking,
+    getMicAnalyser,
+    micStatus,
+  });
 
   return (
     <>

@@ -1,4 +1,4 @@
-import { useEffect, type Dispatch } from "react";
+import { useEffect, useRef, type Dispatch } from "react";
 import type { InterviewSocket } from "../networking/websocket";
 import type { InterviewAction } from "./interviewReducer";
 
@@ -26,9 +26,23 @@ export function useLiveInterviewEngine(
   elapsedSeconds: number,
   dispatch: Dispatch<InterviewAction>,
 ) {
+  // Read via a ref inside the handler rather than depending on
+  // elapsedSeconds directly in the effect below (Feature 20 cleanup):
+  // elapsedSeconds ticks once a second for the whole interview
+  // (state/interviewStore.tsx's "session/tick"), and the socket
+  // subscription effect used to depend on it directly, tearing down and
+  // re-adding the onEvent listener roughly once a second for the entire
+  // interview just so this closure saw a fresh value — needless churn,
+  // and a risk if onEvent ever becomes async/order-sensitive.
+  const elapsedSecondsRef = useRef(elapsedSeconds);
+  useEffect(() => {
+    elapsedSecondsRef.current = elapsedSeconds;
+  }, [elapsedSeconds]);
+
   useEffect(
     () =>
       socket.onEvent((event) => {
+        const elapsedSeconds = elapsedSecondsRef.current;
         switch (event.type) {
           case "interviewer.transcript":
             dispatch({
@@ -109,6 +123,6 @@ export function useLiveInterviewEngine(
             break;
         }
       }),
-    [socket, dispatch, elapsedSeconds],
+    [socket, dispatch],
   );
 }

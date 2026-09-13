@@ -173,7 +173,7 @@ describe("useScreenCapture recording boundaries", () => {
 
     const { result } = renderHook(() => useScreenCapture(fakeSocket()));
 
-    let startPromise: Promise<void>;
+    let startPromise: ReturnType<typeof result.current.start>;
     act(() => {
       startPromise = result.current.start();
     });

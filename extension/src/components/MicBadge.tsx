@@ -1,4 +1,5 @@
 import type { MicStatus } from "../media/useMicrophoneCapture";
+import { StatusDot } from "./StatusDot";
 
 const LABEL: Record<MicStatus, string> = {
   idle: "MIC OFF",
@@ -18,10 +19,5 @@ const DOT_CLASS: Record<MicStatus, string> = {
 
 /** Reflects real mic capture state (Feature 05) — shown only once the interview has started, since idle beforehand would just be clutter. */
 export function MicBadge({ status }: { status: MicStatus }) {
-  return (
-    <div className="flex items-center gap-2 px-5 py-1.5">
-      <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASS[status]}`} aria-hidden />
-      <span className="font-mono text-[10px] tracking-wider text-ink-faint">{LABEL[status]}</span>
-    </div>
-  );
+  return <StatusDot label={LABEL[status]} toneClass={DOT_CLASS[status]} />;
 }

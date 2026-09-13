@@ -5,6 +5,8 @@ import { App } from "./App";
 import { watchCode } from "./editor";
 import { cacheProblemInfo, hasActiveInterviewSession, resetInterviewSession } from "./interviewSession";
 import { stopAllMicrophoneCapture } from "../media/microphone";
+import { stopAllScreenCapture } from "../media/screen";
+import { stopAllInterviewerAudioPlayback } from "../media/interviewerAudioPlayer";
 import { releasePageSpace, reservePageSpace } from "./layout";
 import { isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
 
@@ -84,8 +86,13 @@ function unmount() {
   stopWatchingCode = null;
 
   // Belt and braces: even if a future change loses the React cleanup path,
-  // teardown must never leave the mic live. Cheap and idempotent.
+  // teardown must never leave the mic, screen capture, or interviewer TTS
+  // audio context live. Cheap and idempotent (Feature 20 cleanup: screen
+  // capture and the audio player previously had no matching call here,
+  // unlike the mic).
   stopAllMicrophoneCapture();
+  stopAllScreenCapture();
+  stopAllInterviewerAudioPlayback();
 }
 
 mount();

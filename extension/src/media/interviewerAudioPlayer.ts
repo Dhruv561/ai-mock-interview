@@ -55,6 +55,10 @@ export interface AudioContextLike {
   // level meter and don't implement this, so the analyser is skipped
   // (getAnalyser() stays null) wherever it's absent rather than required.
   createAnalyser?(): AnalyserNodeLike;
+  // Optional for the same reason — existing fakes predate dispose() and
+  // don't need to implement it (Feature 20 cleanup); the real
+  // AudioContext always has one.
+  close?(): Promise<void> | void;
 }
 
 export type AudioContextFactory = () => AudioContextLike;
@@ -73,6 +77,16 @@ export interface InterviewerAudioPlayer {
   // context, and permanently null if the environment/fakes have no
   // createAnalyser.
   getAnalyser(): AnalyserNodeLike | null;
+  /**
+   * Stops any in-flight playback and closes the underlying AudioContext
+   * (if one was ever created). Idempotent and safe to call even if
+   * nothing was ever played. Callers (useInterviewerAudioPlayback) must
+   * call this on unmount — an AudioContext is a real OS resource, same
+   * class of leak media/microphone.ts's stopAllMicrophoneCapture() exists
+   * to prevent for the mic (Feature 20 cleanup: this player previously had
+   * no way to release it at all).
+   */
+  dispose(): void;
 }
 
 export interface InterviewerAudioPlayerOptions {
@@ -91,9 +105,30 @@ function decodePcm16le(chunk: ArrayBuffer): Float32Array {
   return samples;
 }
 
+// Module-level registry of the one player allowed to exist at a time — same
+// guardrail, same historical bug class (SPA navigation tearing down the DOM
+// without running component cleanup, see content/index.tsx) as
+// media/microphone.ts's activeCapture/stopAllMicrophoneCapture() and
+// media/screen.ts's equivalents (Feature 20 cleanup: this player previously
+// had no such safety net at all).
+let activePlayer: InterviewerAudioPlayer | null = null;
+
+/**
+ * Unconditionally disposes any existing interviewer audio player. Safe to
+ * call at any time, including when none exists. Teardown paths should call
+ * this rather than assuming a component's cleanup ran.
+ */
+export function stopAllInterviewerAudioPlayback(): void {
+  activePlayer?.dispose();
+  activePlayer = null;
+}
+
 export function createInterviewerAudioPlayer(
   options: InterviewerAudioPlayerOptions = {},
 ): InterviewerAudioPlayer {
+  // Never let two players' AudioContexts coexist.
+  stopAllInterviewerAudioPlayback();
+
   const onSpeakingChange = options.onSpeakingChange ?? (() => {});
   const createAudioContext = options.createAudioContext ?? defaultAudioContextFactory;
 
@@ -145,7 +180,7 @@ export function createInterviewerAudioPlayer(
     activeSources.clear();
   }
 
-  return {
+  const player: InterviewerAudioPlayer = {
     handleStart(format) {
       stopActiveSources();
       const { ctx } = ensureContext();
@@ -210,5 +245,17 @@ export function createInterviewerAudioPlayer(
     getAnalyser() {
       return analyserNode;
     },
+
+    dispose() {
+      stopActiveSources();
+      void audioContext?.close?.();
+      audioContext = null;
+      gainNode = null;
+      analyserNode = null;
+      if (activePlayer === player) activePlayer = null;
+    },
   };
+
+  activePlayer = player;
+  return player;
 }

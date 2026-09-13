@@ -1,9 +1,9 @@
-import { useAudioLevels } from "../../media/useAudioLevels";
 import { AudioLevelMeter } from "../AudioLevelMeter";
 import { EndReviewButton } from "../EndReviewButton";
 import { HintButton } from "../HintButton";
 import { MuteButton } from "../MuteButton";
 import { PhaseList } from "./PhaseList";
+import { getLastInterviewerMessage, usePanelAudioLevels } from "./panelHelpers";
 import type { PanelBodyProps } from "./PanelBodyProps";
 
 const SCREEN_STATUS_LABEL: Record<PanelBodyProps["screenStatus"], string> = {
@@ -46,10 +46,14 @@ export function DockedPanel({
   hintDisabled,
   onEnd,
 }: PanelBodyProps) {
-  const ttsLevels = useAudioLevels(getTtsAnalyser, isSpeaking);
-  const micLevels = useAudioLevels(getMicAnalyser, micStatus === "active");
+  const { ttsLevels, micLevels } = usePanelAudioLevels({
+    getTtsAnalyser,
+    isSpeaking,
+    getMicAnalyser,
+    micStatus,
+  });
 
-  const lastInterviewerMessage = [...state.messages].reverse().find((m) => m.speaker === "interviewer");
+  const lastInterviewerMessage = getLastInterviewerMessage(state.messages);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-dark-panel text-dark-ink">

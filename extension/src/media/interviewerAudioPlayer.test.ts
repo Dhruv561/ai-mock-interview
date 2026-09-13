@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createInterviewerAudioPlayer,
+  stopAllInterviewerAudioPlayback,
   type AudioBufferLike,
   type AudioContextLike,
   type AudioNodeLike,
@@ -46,6 +47,7 @@ class FakeAudioContext implements AudioContextLike {
   destination: AudioNodeLike = { connect() {} };
   sources: FakeBufferSource[] = [];
   gains: FakeGainNode[] = [];
+  closed = false;
 
   createGain(): GainNodeLike {
     const gain = new FakeGainNode();
@@ -61,6 +63,10 @@ class FakeAudioContext implements AudioContextLike {
 
   createBuffer(_channels: number, length: number): AudioBufferLike {
     return new FakeAudioBuffer(length);
+  }
+
+  close(): void {
+    this.closed = true;
   }
 }
 
@@ -174,5 +180,43 @@ describe("createInterviewerAudioPlayer", () => {
     player.handleChunk(new ArrayBuffer(0));
 
     expect(ctx.sources).toHaveLength(0);
+  });
+
+  it("dispose() stops active sources and closes the AudioContext", () => {
+    const { ctx, player } = setup();
+    player.handleStart("pcm_s16le_16000");
+    player.handleChunk(pcmChunk(8000)); // still scheduled, never finishes
+
+    player.dispose();
+
+    expect(ctx.sources[0].stopped).toBe(true);
+    expect(ctx.closed).toBe(true);
+  });
+
+  it("dispose() is a safe no-op when nothing was ever played", () => {
+    const { player } = setup();
+    expect(() => player.dispose()).not.toThrow();
+  });
+
+  it("creating a new player disposes the previous one (only one AudioContext at a time)", () => {
+    const { ctx: firstCtx, player: firstPlayer } = setup();
+    firstPlayer.handleStart("pcm_s16le_16000");
+    firstPlayer.handleChunk(pcmChunk(8000));
+
+    setup(); // constructing a second player, mirroring an SPA remount
+
+    expect(firstCtx.sources[0].stopped).toBe(true);
+    expect(firstCtx.closed).toBe(true);
+  });
+
+  it("stopAllInterviewerAudioPlayback() disposes the active player", () => {
+    const { ctx, player } = setup();
+    player.handleStart("pcm_s16le_16000");
+    player.handleChunk(pcmChunk(8000));
+
+    stopAllInterviewerAudioPlayback();
+
+    expect(ctx.sources[0].stopped).toBe(true);
+    expect(ctx.closed).toBe(true);
   });
 });

@@ -38,7 +38,13 @@ export function useScreenCapture(socket: InterviewSocket) {
     if (wasActive) socket.send({ type: "screen.recording.stopped" });
   }, [socket]);
 
-  const start = useCallback(async () => {
+  // Returns the resulting status so callers can gate on the outcome
+  // synchronously, same reasoning and shape as
+  // useMicrophoneCapture.ts's start() (Feature 20 cleanup — this used to
+  // return Promise<void> despite otherwise mirroring that hook line for
+  // line, foreclosing gating on screen-capture outcome without a signature
+  // change).
+  const start = useCallback(async (): Promise<ScreenStatus> => {
     // Starting twice would strand the first recorder; stop it first so the
     // invariant "at most one capture" holds here too.
     if (captureRef.current) stop();
@@ -52,12 +58,12 @@ export function useScreenCapture(socket: InterviewSocket) {
       // Stopped or unmounted while the share picker was open. Release the
       // stream immediately rather than starting a recorder nobody owns.
       if (stream) for (const track of stream.getTracks()) track.stop();
-      return;
+      return "idle";
     }
 
     if (!stream) {
       setStatus("denied");
-      return;
+      return "denied";
     }
 
     // Chunks are buffered inside screen.ts, not forwarded anywhere here —
@@ -68,18 +74,19 @@ export function useScreenCapture(socket: InterviewSocket) {
     const capture = startScreenCapture(stream, () => {}, undefined, undefined, () => stop());
     if (!capture) {
       setStatus("unsupported");
-      return;
+      return "unsupported";
     }
 
     if (generation !== generationRef.current) {
       // Lost the race in the narrow window after the stream resolved.
       capture.stop();
-      return;
+      return "idle";
     }
 
     captureRef.current = capture;
     setStatus("active");
     socket.send({ type: "screen.recording.started" });
+    return "active";
   }, [socket, stop]);
 
   // Screen recording must never outlive the component that shows it is

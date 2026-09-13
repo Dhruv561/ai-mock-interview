@@ -31,6 +31,11 @@ export function useInterviewerAudioPlayback(socket: InterviewSocket) {
     return () => {
       unsubscribeEvent();
       unsubscribeAudio();
+      // Releases the AudioContext (Feature 20 cleanup — this player
+      // previously had no dispose path at all, so its AudioContext, and
+      // any audio already scheduled, outlived every LeetCode SPA
+      // navigation the panel remounted across while TTS was in use).
+      player.dispose();
     };
   }, [socket, player]);
 
