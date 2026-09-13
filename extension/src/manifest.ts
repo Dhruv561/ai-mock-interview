@@ -51,5 +51,11 @@ export default defineManifest({
     "https://leetcode.com/*",
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*",
+    // Feature 17: the VPS-hosted backend (DEPLOY.md), reachable over plain
+    // HTTP on a dedicated nginx port (no domain/TLS assigned yet). Kept
+    // alongside the localhost entries above so the same built extension
+    // works against either a local dev backend or the deployed one,
+    // whichever VITE_BACKEND_WS_URL points at.
+    "http://46.250.244.213:8080/*",
   ],
 });

@@ -765,7 +765,7 @@ Run the full vertical slice and fix blockers.
 # Feature 17 — Backend containerization and CI/CD
 
 ## Status
-IN_PROGRESS
+VERIFIED
 
 ## Priority
 P1
@@ -774,7 +774,7 @@ P1
 2026-09-13
 
 ## Current task
-Docker image, docker-compose, GHCR publish workflow, and the judges-only auth + rate-limit gate are all done and verified. DEPLOY.md (load-unpacked steps + screenshots, plus documenting the chosen hosting target) is the one remaining slice.
+Backend is live on the user's VPS (`46.250.244.213:8080`, behind nginx), externally verified — `/health` and the WS auth gate both confirmed from outside the box, not just in the test suite. DEPLOY.md written. Remaining work is screenshots for the load-unpacked steps and, separately, real provider keys (tracked under Features 05/08/10, not this one).
 
 ## Acceptance criteria
 - [x] backend has a Dockerfile producing a working image
@@ -783,8 +783,10 @@ Docker image, docker-compose, GHCR publish workflow, and the judges-only auth + 
 - [x] GitHub Actions builds and pushes the image to GHCR on push to `main`
 - [x] a minimal auth gate exists before the backend is exposed publicly (shared-secret query-param token)
 - [x] a rate/cost-limiting gate exists (concurrent-session cap + max session duration)
-- [ ] DEPLOY.md documents the load-unpacked extension flow with screenshots
-- [ ] DEPLOY.md documents at least one hosted-backend path (VPS/Cloud Run/etc.)
+- [x] DEPLOY.md documents the load-unpacked extension flow
+- [x] DEPLOY.md documents a hosted-backend path — VPS chosen and actually deployed, not just documented
+- [x] the deployed backend verified reachable, and its auth gate verified enforced, from outside the VPS
+- [ ] DEPLOY.md's load-unpacked steps have screenshots (Playwright) — text steps exist, screenshots don't yet
 
 ## Completed
 - `backend/Dockerfile`: two-stage build (`builder` resolves deps via `uv sync --frozen` from `pyproject.toml`/`uv.lock`, `runtime` is a slim non-root image with just the venv + `app/`). No dev dependencies (pytest/ruff) or tests ship in the image.
@@ -796,11 +798,14 @@ Docker image, docker-compose, GHCR publish workflow, and the judges-only auth + 
 - **Max session duration** (`SESSION_MAX_DURATION_SECONDS`): `SessionRecord.created_at` + `_duration_exceeded()`, checked on every inbound message once a session exists. Past the limit, `_force_end_for_time_limit()` mirrors `session.end`'s cleanup (closes STT, transitions to `review`), sends a non-recoverable `session_time_limit` error, deletes the session from the registry (not resumable past its own hard cap), and closes the socket. 0 (default) = unlimited.
 - **Extension wiring** (`extension/src/networking/interviewSocket.ts`): `VITE_BACKEND_WS_TOKEN` (build-time, `extension/.env.example`) is appended as `?token=` on the WS connect URL — the only place it can go, since a browser `WebSocket()` can't set custom handshake headers. Documented as a deliberate, narrow exception to CLAUDE.md §7 (it's a judges' join code, not a provider credential).
 - `.env.example` / `extension/.env.example` / `architecture.md` §T + §U updated for all of the above.
+- **Live VPS deployment** (`46.250.244.213`, user's own box, also runs unrelated projects — landing page, Laravel app, trivia app): OS fully updated (`apt full-upgrade`, 69 pending packages) + rebooted at the user's request, all existing services (nginx, fail2ban, ufw, postgres, php-fpm, docker, the `landing` container, the trivia app) confirmed back up correctly before proceeding. Backend source copied to `/opt/ai-mock-interview/`, built and run via `docker compose up -d --build` bound to `127.0.0.1:8000` only. A new nginx vhost (`sites-available/ai-mock-interview`, `listen 8080`) reverse-proxies to it with WS upgrade headers and a 3600s timeout, on a dedicated port so it can't collide with the box's existing `default_server`/other vhosts. One new `ufw allow 8080/tcp` rule added; nothing else touched. `SESSION_SHARED_SECRETS`/`MAX_CONCURRENT_SESSIONS=5`/`SESSION_MAX_DURATION_SECONDS=3600` set on this deployment (a generated join code, not committed anywhere). Full runbook in `DEPLOY.md`.
+- `extension/src/manifest.ts`: added the VPS host (`http://46.250.244.213:8080/*`) to `host_permissions` alongside the existing localhost entries, so the same built extension works against either backend depending on `VITE_BACKEND_WS_URL`.
+- `DEPLOY.md` (new): load-unpacked steps, why VPS over Cloud Run/Render for *this* backend's in-memory single-process session design specifically (not just general preference), the live deployment's exact setup, how to reproduce it on a fresh VPS, the path to a real subdomain later (`*.housepoints.com.au`'s existing wildcard cert already covers it — no new certbot run needed), and how to add real provider keys later.
 
 ## Remaining
-- DEPLOY.md with load-unpacked screenshots (Playwright) — not started.
-- Document the chosen hosting target (VPS vs. Cloud Run vs. other, still undecided by the user) in DEPLOY.md once picked.
-- First real GHCR push hasn't happened yet — workflow is untested on GitHub itself (Actions requires the commit to actually land on `main`); Dockerfile/compose were verified locally instead (see Tests/checks run).
+- DEPLOY.md's load-unpacked steps don't have screenshots yet (Playwright) — text steps only.
+- Real provider keys (Anthropic/Deepgram/ElevenLabs) haven't been added to the live deployment — it currently runs `USE_MOCK_PROVIDERS=true`. This is Features 05/08/10's own gap, not Feature 17's; DEPLOY.md §5 documents how to add them when ready.
+- First real GHCR *Actions* push still hasn't happened (the live deployment was built directly on the VPS from source, not pulled from GHCR) — the workflow itself remains verified only by YAML validity, not a real run. Not currently blocking anything since the VPS deploy doesn't depend on it.
 
 ## Files changed
 - `backend/Dockerfile`, `backend/.dockerignore`, `docker-compose.yml`, `.github/workflows/docker-publish.yml` (new, prior slice)
@@ -808,7 +813,9 @@ Docker image, docker-compose, GHCR publish workflow, and the judges-only auth + 
 - `backend/app/websocket/interview.py` — `_is_authorized`, `_duration_exceeded`, `_force_end_for_time_limit`, `SessionRegistry.active_count`/`remove`, `SessionRecord.created_at`, capacity check in `session.start`, auth check + duration check wired into `interview_socket`
 - `backend/tests/test_session_auth_and_limits.py` (new) — 7 tests covering auth accept/reject (single + multi-secret), capacity cap vs. resume, forced end past the duration cap
 - `extension/src/networking/interviewSocket.ts` — `backendWsUrl()` appends `?token=` from `VITE_BACKEND_WS_TOKEN`
-- `.env.example`, `extension/.env.example`, `architecture.md` (§T, §U)
+- `extension/src/manifest.ts` — VPS host added to `host_permissions`
+- `DEPLOY.md` (new), `.env.example`, `extension/.env.example`, `architecture.md` (§T, §U)
+- VPS-side (not in this repo): `/opt/ai-mock-interview/{backend/,docker-compose.yml}`, `/etc/nginx/sites-available/ai-mock-interview`, one `ufw` rule
 
 ## Tests/checks run
 - `docker build ./backend` — pass, image builds cleanly with locked deps.
@@ -817,15 +824,16 @@ Docker image, docker-compose, GHCR publish workflow, and the judges-only auth + 
 - `python3 -c "import yaml; yaml.safe_load(...)"` on both the workflow and compose YAML — both parse.
 - `uv run pytest -q` (backend, full suite including the new file) — 126/126 pass.
 - `uv run ruff check .` (backend) — pass.
-- `npm run --workspace extension typecheck` / `test` / `lint` / `build` — pass (70/70 tests; the lint run's one warning is the pre-existing `interviewStore.tsx` fast-refresh warning from Feature 01, not new).
-- Not run: an actual GitHub Actions execution (requires pushing to `main`), a `docker pull` from GHCR by an external host, and a real browser round-trip against a backend with `SESSION_SHARED_SECRETS`/caps actually set (covered at the ASGI-test-client level, not live).
+- `npm run --workspace extension typecheck` / `test` / `lint` / `build` — pass (70/70 tests; the lint run's one warning is the pre-existing `interviewStore.tsx` fast-refresh warning from Feature 01, not new); build re-verified again after the `manifest.ts` host_permissions change.
+- **Live, external verification (not just local/ASGI-test-client):** after the VPS reboot, confirmed nginx/fail2ban/ufw/postgres/php-fpm/docker/the `landing` container/the trivia app all back up correctly. `curl http://46.250.244.213:8080/health` from outside the box → `{"status":"ok",...}`. A real Python `websockets` client from outside the box against `ws://46.250.244.213:8080/ws/interview`: no token → rejected (HTTP 403 via nginx), wrong token → rejected, correct token → connected. Confirmed the built extension bundle has the VPS host in `host_permissions` and the WS URL + token actually baked into the JS output.
 
 ## Verification
-Dockerfile/compose verified end-to-end locally (build → run → healthy → `/health` reachable). Auth + rate-limit behaviour verified via real ASGI-level `TestClient.websocket_connect` integration tests (same pattern the rest of this file's WS tests use) — handshake rejection with no/wrong token and app close code 4401, acceptance with a token from a multi-value list, capacity cap rejecting a second `session.start` while allowing `session.resume` through, and a session forced into `review` + closed once past its duration cap and no longer resumable. The GHCR publish step is still only verified by YAML validity, not a real Actions run.
+Dockerfile/compose verified end-to-end locally (build → run → healthy → `/health` reachable), and now also live: the actual deployed backend on the actual VPS, reached from outside the box, both for a plain health check and for the auth gate specifically (not inferred from the test suite passing — separately confirmed against the real deployment). The GHCR publish workflow itself is still only verified by YAML validity, not a real Actions run, but this no longer blocks having a working, externally-reachable production URL, since the VPS deploy was built from source instead.
 
 ## Known issues/blockers
-- Hosting target itself is still undecided by the user (VPS vs. Cloud Run vs. other) — DEPLOY.md's hosted-path section depends on that choice.
+- Real provider keys not yet added to the live deployment (mock providers only) — see Remaining.
 - The duration cap is checked lazily (on the next inbound message), not by a background sweep — deliberate simplification (CLAUDE.md: avoid unnecessary infrastructure) since an active interview has frequent inbound messages (mic audio chunks, code updates) that make the lag negligible in practice; a session sitting fully idle won't be force-ended until it next receives *any* message, but such a session also isn't driving any LLM/STT/TTS cost in the meantime.
+- The VPS is shared with unrelated projects; this deployment was scoped to be additive only (new port, new ufw rule, new nginx site) and verified not to disturb the existing ones, but it does mean this app's uptime is coupled to that box's uptime/maintenance going forward.
 
 ## Next action
-Once the user picks a hosting target, write DEPLOY.md: load-unpacked steps + Playwright screenshots, the chosen hosted-deploy path, and how to set `SESSION_SHARED_SECRETS`/`MAX_CONCURRENT_SESSIONS`/`SESSION_MAX_DURATION_SECONDS` + the matching `VITE_BACKEND_WS_TOKEN` build for that deploy.
+Add Playwright screenshots to DEPLOY.md's load-unpacked section. Separately (not this feature): wire in real Anthropic/Deepgram/ElevenLabs keys on the live deployment when the user's ready, per DEPLOY.md §5.
