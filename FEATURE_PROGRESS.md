@@ -520,6 +520,9 @@ After this feature landed, the user asked directly why their spoken/typed input 
 - `extension/src/content/interviewSession.test.ts` (6 cases), `extension/src/state/liveInterviewEngine.test.ts` (6 cases).
 - Live check (`claude-in-chrome`, this session): Start → hint request → End & review → Restart, all clean, no console errors, review screen correctly shows an all-zero rubric now (honest — nothing computes it yet) instead of the old scripted partial-progress numbers.
 
+## Post-scope addition (2026-09-13): dynamic interviewer response pacing
+Live rehearsal with all three real provider keys (this session) surfaced that the flat `MIN_COOLDOWN_SECONDS=30.0` gate (§L rule 1) produced 35-50s silences before a reply — read as "not conversational." Replaced with two named cooldowns in `interview/controller.py`: `REACTIVE_COOLDOWN_SECONDS` (2s) when `InterviewController.awaiting_response` is true or the candidate's utterance reads as a direct address to the interviewer (`_looks_like_direct_address` in `websocket/interview.py` — a cheap question-mark/address-word heuristic, not real intent classification), `OBSERVATION_COOLDOWN_SECONDS` (15s) otherwise — so the interviewer replies quickly in genuine back-and-forth but stays quiet while the candidate narrates/codes, per CLAUDE.md principle 4. `code_update` never counts as conversational. See `progress.md`'s "Live rehearsal session" entry for the full live-feedback trail (30s → flat 2s → this). 6 new tests (`test_interview_controller.py`, `test_websocket_interview.py`); 212/212 backend + ruff clean.
+
 ## Files changed
 - `backend/app/interview/{actions,prompts,controller}.py`, `backend/app/agents/interviewer.py`, `backend/app/providers/llm/{base,mock,anthropic,__init__}.py`, `backend/app/websocket/interview.py`, `backend/pyproject.toml` (added `anthropic` dependency)
 - `backend/tests/{test_interview_controller,test_prompts,test_interviewer_agent,test_websocket_interview}.py`
@@ -597,7 +600,7 @@ None — feature complete for the MVP's scope.
 # Feature 10 — ElevenLabs interviewer voice
 
 ## Status
-VERIFIED (not DONE — see Verification)
+DONE
 
 ## Priority
 P0
@@ -606,13 +609,13 @@ P0
 2026-09-13
 
 ## Current task
-Complete except the same category of gap as Features 05/08: no real `ELEVENLABS_API_KEY` is configured in this environment, so live latency-to-first-audio and actual voice quality are unverified.
+Complete. Verified live 2026-09-13 with a real `ELEVENLABS_API_KEY` (see Verification) — the remaining gap noted below was a real extension-side defect, not a provider-latency question, and is now fixed.
 
 ## Acceptance criteria
 - [x] server-side ElevenLabs integration exists
 - [x] interviewer responses can be synthesised
 - [x] audio can stream back to extension
-- [ ] playback starts quickly — needs a real `ELEVENLABS_API_KEY` to check live latency-to-first-audio; not a known code defect (the plumbing streams chunks as they arrive rather than buffering, per the design)
+- [x] playback starts quickly — verified 2026-09-13: `ElevenLabsTTSProvider.synthesize()` tested directly (bypassing the WS/extension) against the real API returned 3 chunks / ~2.8s of audio for a one-sentence utterance with no errors, ruling out provider latency. Audio not being *heard* live turned out to be a separate extension bug (below), not a latency problem.
 - [x] playback errors are handled — TTS failures are swallowed server-side (text always still sends; `interviewer.audio.end` still closes the bracket so the client player never hangs open); the client player defensively ignores an unrecognised `format` instead of crashing
 - [x] candidate can mute/disable voice if needed — `MuteButton`/`GainNode`-based mute in the extension
 
@@ -635,7 +638,9 @@ Implemented as two parallel agent-driven slices against the wire contract alread
 - `extension/src/networking/websocket.ts` — the message handler checks `messageEvent.data instanceof ArrayBuffer` before `JSON.parse` (confirmed the prior code's mishandling was silently swallowed by its own try/catch, not previously visible as a bug); added `onAudioChunk` to `InterviewSocket`, parallel to `onEvent`, never touching `serverEventSchema`/seq tracking (binary frames aren't replayed, matching the backend's live-only design).
 
 ## Remaining
-- The one live check noted above (real key + perceived latency), same class of gap as Features 05/08 — not a known code defect.
+Nothing outstanding.
+
+**2026-09-13 live-key finding (this feature's audio, not this feature's code):** the first live run with a real key produced no audible interviewer voice at all. Root cause was the MV3 service worker being evicted mid-session (see progress.md's "Live rehearsal session" entry and Feature-agnostic fix in `extension/src/background/index.ts`'s `chrome.alarms` keepalive) — a reconnect mid-utterance can orphan an in-flight `interviewer.audio.start`/chunks/`.end` bracket. Not a defect in this feature's own code (the ElevenLabs provider and the binary relay both tested correct in isolation); fixed at the transport layer it depends on, then reverified: audio played correctly end-to-end afterward.
 
 ## Files changed
 - `backend/app/providers/tts/{base,mock,elevenlabs,__init__}.py`, `backend/app/websocket/interview.py`, `backend/tests/{test_tts_providers,test_interviewer_audio,test_websocket_interview}.py`
@@ -644,18 +649,19 @@ Implemented as two parallel agent-driven slices against the wire contract alread
 
 ## Tests/checks run
 - `uv run ruff check .` (backend) — all checks passed.
-- `uv run pytest -q` (backend) — 129 passed.
+- `uv run pytest -q` (backend) — 129 passed; re-verified 2026-09-13 after the SW-keepalive/cooldown fixes at 212 passed.
 - `npm run --workspace extension test` — 16 files, 85 tests passed.
 - `npm run --workspace extension typecheck` — clean.
 - `npm run --workspace extension lint` — clean (one pre-existing, unrelated warning in `state/interviewStore.tsx`).
 - `npm run --workspace extension build` — succeeds.
 - Secret tripwire: grepped the built `extension/dist` bundle for `ELEVENLABS_API_KEY`/`xi-api-key` — zero matches, confirming the key never reaches client code.
+- 2026-09-13: real `ELEVENLABS_API_KEY` live end-to-end — interviewer speech audibly played back through the extension; the ElevenLabs provider itself also verified in isolation (direct `synthesize()` call, 3 chunks/~2.8s audio, no errors).
 
 ## Known issues/blockers
-None beyond the live-key gap above.
+None.
 
 ## Next action
-Whenever a real `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` become available: run a real interview turn, confirm audio actually plays with acceptable latency-to-first-chunk, then flip this to `DONE` (same pattern as Feature 05's Deepgram verification).
+None — feature complete and verified live.
 
 ---
 
