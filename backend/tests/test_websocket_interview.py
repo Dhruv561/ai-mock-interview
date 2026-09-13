@@ -417,6 +417,15 @@ def test_accepted_action_with_rubric_updates_emits_rubric_updated_event():
         question = ws.receive_json()
         assert question["type"] == "interviewer.transcript"
 
+        # Feature 10 (ElevenLabs TTS) brackets every spoken text event with
+        # interviewer.audio.start/.end — the mock TTS provider yields no
+        # bytes in between, but the bracket events themselves still land on
+        # the wire before the rubric update that follows the text event.
+        audio_start = ws.receive_json()
+        assert audio_start["type"] == "interviewer.audio.start"
+        audio_end = ws.receive_json()
+        assert audio_end["type"] == "interviewer.audio.end"
+
         rubric_event = ws.receive_json()
         assert rubric_event["type"] == "rubric.updated"
         assert rubric_event["evidence"]
