@@ -4,26 +4,34 @@ import {
   requestMicrophoneStream,
   startMicrophoneCapture,
   stopAllMicrophoneCapture,
-  type MediaRecorderLike,
+  type AudioProcessorLike,
+  type BuiltAudioProcessor,
 } from "./microphone";
 
-class FakeMediaRecorder implements MediaRecorderLike {
-  ondataavailable: ((event: { data: Blob }) => void) | null = null;
-  started: number[] = [];
-  stopped = false;
+type AudioProcessEvent = Parameters<NonNullable<AudioProcessorLike["onaudioprocess"]>>[0];
 
-  start(timeslice?: number) {
-    this.started.push(timeslice ?? -1);
-  }
+class FakeProcessor implements AudioProcessorLike {
+  onaudioprocess: AudioProcessorLike["onaudioprocess"] = null;
+  disconnect = vi.fn();
 
-  stop() {
-    this.stopped = true;
-  }
-
-  emit(data: Blob) {
-    this.ondataavailable?.({ data });
+  emit(samples: Float32Array, sampleRate = 16000) {
+    const event: AudioProcessEvent = {
+      inputBuffer: { getChannelData: () => samples, sampleRate },
+    };
+    this.onaudioprocess?.(event);
   }
 }
+
+function fakeBuiltProcessor(): { built: BuiltAudioProcessor; processor: FakeProcessor; cleanup: ReturnType<typeof vi.fn> } {
+  const processor = new FakeProcessor();
+  const cleanup = vi.fn();
+  return { built: { processor, cleanup }, processor, cleanup };
+}
+
+// A full chunk is CHUNK_SAMPLE_COUNT (4000) samples at the 16kHz target
+// rate — feeding exactly that many samples at sampleRate=16000 (no
+// resampling) triggers exactly one onChunk call.
+const FULL_CHUNK = new Float32Array(4000).fill(0.5);
 
 function fakeStream() {
   const tracks: Array<{ stop: () => void; stopped: boolean }> = [
@@ -50,62 +58,57 @@ describe("requestMicrophoneStream", () => {
 });
 
 describe("startMicrophoneCapture", () => {
-  it("starts the recorder on a 250ms timeslice", () => {
-    let created: FakeMediaRecorder | null = null;
-    const capture = startMicrophoneCapture(
-      fakeStream(),
-      () => {},
-      () => (created = new FakeMediaRecorder()),
-      () => true,
-    );
+  it("forwards a PCM chunk once enough samples have accumulated", () => {
+    const chunks: Blob[] = [];
+    const { built, processor } = fakeBuiltProcessor();
 
-    expect(capture).not.toBeNull();
-    expect(created!.started).toEqual([250]);
+    startMicrophoneCapture(fakeStream(), (chunk) => chunks.push(chunk), () => built);
+    processor.emit(FULL_CHUNK);
+
+    expect(chunks).toHaveLength(1);
+    // 4000 samples * 2 bytes (Int16) = 8000 bytes.
+    expect(chunks[0].size).toBe(8000);
   });
 
-  it("forwards chunks via onChunk and drops empty ones", () => {
+  it("does not forward a chunk before enough samples have accumulated", () => {
     const chunks: Blob[] = [];
-    let recorder: FakeMediaRecorder | null = null;
-    startMicrophoneCapture(
-      fakeStream(),
-      (chunk) => chunks.push(chunk),
-      () => (recorder = new FakeMediaRecorder()),
-      () => true,
-    );
+    const { built, processor } = fakeBuiltProcessor();
 
-    recorder!.emit(new Blob(["data"]));
-    recorder!.emit(new Blob([])); // empty — must not be forwarded
+    startMicrophoneCapture(fakeStream(), (chunk) => chunks.push(chunk), () => built);
+    processor.emit(new Float32Array(1000).fill(0.1)); // well under one chunk's worth
+
+    expect(chunks).toHaveLength(0);
+  });
+
+  it("carries a partial remainder over into the next chunk", () => {
+    const chunks: Blob[] = [];
+    const { built, processor } = fakeBuiltProcessor();
+
+    startMicrophoneCapture(fakeStream(), (chunk) => chunks.push(chunk), () => built);
+    processor.emit(new Float32Array(3000).fill(0.1));
+    expect(chunks).toHaveLength(0);
+    processor.emit(new Float32Array(3000).fill(0.1)); // 3000 + 3000 = one chunk, 2000 left over
 
     expect(chunks).toHaveLength(1);
   });
 
-  it("stops the recorder and releases every track on stop()", () => {
+  it("stops the processor and releases every track on stop()", () => {
     const stopTrack = vi.fn();
     const stream = { getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream;
-    let recorder: FakeMediaRecorder | null = null;
+    const { built, cleanup } = fakeBuiltProcessor();
 
-    const capture = startMicrophoneCapture(
-      stream,
-      () => {},
-      () => (recorder = new FakeMediaRecorder()),
-      () => true,
-    );
+    const capture = startMicrophoneCapture(stream, () => {}, () => built);
     capture!.stop();
 
-    expect(recorder!.stopped).toBe(true);
+    expect(cleanup).toHaveBeenCalledOnce();
     expect(stopTrack).toHaveBeenCalledOnce();
   });
 
-  it("returns null and releases the mic when no supported mime type exists", () => {
+  it("returns null and releases the mic when Web Audio is unavailable", () => {
     const stopTrack = vi.fn();
     const stream = { getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream;
 
-    const capture = startMicrophoneCapture(
-      stream,
-      () => {},
-      () => new FakeMediaRecorder(),
-      () => false,
-    );
+    const capture = startMicrophoneCapture(stream, () => {}, () => null);
 
     expect(capture).toBeNull();
     expect(stopTrack).toHaveBeenCalledOnce();
@@ -120,71 +123,59 @@ describe("microphone capture lifecycle guarantees", () => {
   afterEach(() => stopAllMicrophoneCapture());
 
   it("stops a previous capture when a new one starts", () => {
-    let first: FakeMediaRecorder | undefined;
-    let second: FakeMediaRecorder | undefined;
+    const first = fakeBuiltProcessor();
+    const second = fakeBuiltProcessor();
 
-    startMicrophoneCapture(
-      fakeStream(),
-      () => {},
-      () => (first = new FakeMediaRecorder()),
-      () => true,
-    );
-    startMicrophoneCapture(
-      fakeStream(),
-      () => {},
-      () => (second = new FakeMediaRecorder()),
-      () => true,
-    );
+    startMicrophoneCapture(fakeStream(), () => {}, () => first.built);
+    startMicrophoneCapture(fakeStream(), () => {}, () => second.built);
 
-    expect(first!.stopped).toBe(true);
-    expect(second!.stopped).toBe(false);
+    expect(first.cleanup).toHaveBeenCalledOnce();
+    expect(second.cleanup).not.toHaveBeenCalled();
   });
 
   it("stopAllMicrophoneCapture() halts recording and releases the mic", () => {
-    let recorder: FakeMediaRecorder | undefined;
+    const { built, cleanup } = fakeBuiltProcessor();
     const stream = fakeStream();
 
-    startMicrophoneCapture(
-      stream,
-      () => {},
-      () => (recorder = new FakeMediaRecorder()),
-      () => true,
-    );
+    startMicrophoneCapture(stream, () => {}, () => built);
     expect(isMicrophoneCapturing()).toBe(true);
 
     stopAllMicrophoneCapture();
 
-    expect(recorder!.stopped).toBe(true);
+    expect(cleanup).toHaveBeenCalledOnce();
     expect(stream.getTracks()[0].stop).toHaveBeenCalled();
     expect(isMicrophoneCapturing()).toBe(false);
   });
 
   it("does not forward a chunk delivered after stop()", () => {
     const chunks: Blob[] = [];
-    let recorder: FakeMediaRecorder | undefined;
+    const { built, processor } = fakeBuiltProcessor();
 
-    const capture = startMicrophoneCapture(
-      fakeStream(),
-      (chunk) => chunks.push(chunk),
-      () => (recorder = new FakeMediaRecorder()),
-      () => true,
-    );
+    const capture = startMicrophoneCapture(fakeStream(), (chunk) => chunks.push(chunk), () => built);
     capture!.stop();
+    processor.emit(FULL_CHUNK); // onaudioprocess was nulled out by stop()
 
-    // MediaRecorder can flush a final buffered chunk after stop(); it must
-    // not reach the socket once the user believes recording has ended.
-    recorder!.emit(new Blob(["late"]));
+    expect(chunks).toHaveLength(0);
+  });
+
+  it("ignores a processing event already in flight when stop() was called", () => {
+    const chunks: Blob[] = [];
+    const { built, processor } = fakeBuiltProcessor();
+
+    const capture = startMicrophoneCapture(fakeStream(), (chunk) => chunks.push(chunk), () => built);
+    // Captured before stop() nulls processor.onaudioprocess, simulating a
+    // callback that had already begun before stop() ran — the closure's own
+    // `stopped` flag, not the null-out, is what must block this.
+    const inFlightHandler = processor.onaudioprocess;
+    capture!.stop();
+    inFlightHandler?.({ inputBuffer: { getChannelData: () => FULL_CHUNK, sampleRate: 16000 } });
 
     expect(chunks).toHaveLength(0);
   });
 
   it("treats stop() as idempotent", () => {
-    const capture = startMicrophoneCapture(
-      fakeStream(),
-      () => {},
-      () => new FakeMediaRecorder(),
-      () => true,
-    );
+    const { built } = fakeBuiltProcessor();
+    const capture = startMicrophoneCapture(fakeStream(), () => {}, () => built);
 
     capture!.stop();
     expect(() => capture!.stop()).not.toThrow();

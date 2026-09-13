@@ -103,8 +103,8 @@ class PortSocket implements WebSocketLike {
       return;
     }
     // Ports are JSON-only, so binary audio has to be encoded. Base64 costs
-    // ~33% overhead on a 250ms Opus chunk, which is a few KB — not worth a
-    // more elaborate transfer scheme at this scale.
+    // ~33% overhead on a 250ms PCM16 chunk (~8KB), which is a few KB — not
+    // worth a more elaborate transfer scheme at this scale.
     this.sendChain = this.sendChain.then(async () => {
       const buffer = data instanceof Blob ? await data.arrayBuffer() : (data as ArrayBuffer);
       this.post({ kind: "binary", base64: arrayBufferToBase64(buffer) });

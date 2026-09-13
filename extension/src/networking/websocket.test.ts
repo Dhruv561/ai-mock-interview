@@ -180,33 +180,31 @@ describe("connectInterviewSocket", () => {
     const socket = connectInterviewSocket("ws://test", factory);
     sockets[0].triggerOpen();
 
-    // The first chunk carries the WebM container header; if it is dropped,
-    // the STT provider receives an unidentifiable stream and closes it.
-    const header = new Blob(["header"]);
+    const first = new Blob(["first"]);
     const second = new Blob(["second"]);
-    socket.sendAudioChunk(header);
+    socket.sendAudioChunk(first);
     socket.sendAudioChunk(second);
     expect(sockets[0].sentBinary).toHaveLength(0);
 
     sockets[0].triggerMessage({ type: "session.started", seq: 1, session_id: "abc-123" });
 
-    expect(sockets[0].sentBinary).toEqual([header, second]);
+    expect(sockets[0].sentBinary).toEqual([first, second]);
   });
 
-  it("keeps the header chunk when trimming an overflowing audio buffer", () => {
+  it("keeps only the most recent chunks when trimming an overflowing audio buffer", () => {
     const { sockets, factory } = makeFactory();
     const socket = connectInterviewSocket("ws://test", factory);
     sockets[0].triggerOpen();
 
-    const header = new Blob(["header"]);
-    socket.sendAudioChunk(header);
+    const oldest = new Blob(["oldest"]);
+    socket.sendAudioChunk(oldest);
     for (let i = 0; i < 50; i += 1) socket.sendAudioChunk(new Blob([`chunk-${i}`]));
 
     sockets[0].triggerMessage({ type: "session.started", seq: 1, session_id: "abc-123" });
 
-    // Bounded, but the header survives trimming as index 0.
-    expect(sockets[0].sentBinary.length).toBeLessThanOrEqual(21);
-    expect(sockets[0].sentBinary[0]).toBe(header);
+    // Bounded, and the oldest chunk was the first to be trimmed away.
+    expect(sockets[0].sentBinary.length).toBeLessThanOrEqual(20);
+    expect(sockets[0].sentBinary).not.toContain(oldest);
   });
 
   it("discards audio buffered before a session when one starts", () => {

@@ -18,13 +18,15 @@ const RECONNECT_MAX_MS = 15000;
 
 // Mic capture starts on the Start click, but `sessionId` only exists once
 // session.started comes back — so the first chunks are produced before there
-// is anywhere to send them. They used to be dropped, which quietly broke
-// real transcription: MediaRecorder puts the WebM/EBML container header in
-// its *first* chunk only, and every later chunk is a bare continuation
-// cluster. Deepgram can't identify a container it never received the header
-// for, so it closed the stream immediately (observed live 2026-09-13 — a log
-// full of `43 c3 81 00` clusters and not one `1a 45 df a3` header).
-// Buffering until the session opens keeps that header intact.
+// is anywhere to send them. They used to be dropped outright, which lost a
+// few hundred ms of speech at the start of every session. Buffered instead,
+// capped and FIFO-trimmed (oldest first) so a session that never starts
+// can't grow this unboundedly.
+//
+// Chunks are headerless raw PCM16 (media/microphone.ts) as of 2026-09-13, so
+// unlike the original MediaRecorder/WebM-Opus days there is no longer a
+// first chunk that's more valuable than the rest — every chunk decodes
+// independently, so plain oldest-first trimming is correct.
 const MAX_PENDING_AUDIO_CHUNKS = 20; // ~5s at the 250ms capture interval
 
 export interface InterviewSocket {
@@ -193,13 +195,10 @@ export function connectInterviewSocket(
         ws.send(chunk);
         return;
       }
-      // No session yet — hold the chunk rather than dropping it, so the
-      // container header in chunk #1 survives to reach the STT provider.
+      // No session yet — hold the chunk rather than dropping it.
       pendingAudio.push(chunk);
       if (pendingAudio.length > MAX_PENDING_AUDIO_CHUNKS) {
-        // Drop from index 1, never index 0: the first chunk is the only one
-        // carrying the WebM header, so it must outlive any trimming.
-        pendingAudio.splice(1, 1);
+        pendingAudio.shift(); // oldest first — see the comment above
       }
     },
     onEvent(handler) {
