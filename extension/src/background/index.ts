@@ -25,6 +25,47 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[ai-mock-interview] installed");
 });
 
+// Convai spike only (spikes/elevenlabs-convai/README.md, progress.md's
+// "Spike" section) — content/convaiSession.ts's two plain REST calls
+// (signed-url, review) hit the exact same wall as the real WebSocket did
+// (see the header comment above and architecture.md §B.1): leetcode.com's
+// CSP applies to a content script's own fetch()/XMLHttpRequest just like
+// it does to WebSocket, so those calls are relayed through here instead —
+// the background service worker's fetch is subject to neither the page's
+// CSP nor Private Network Access, same reason the socket lives here.
+interface ConvaiHttpRequest {
+  kind: "convai-http";
+  url: string;
+  method: "GET" | "POST";
+  body?: string;
+}
+
+interface ConvaiHttpResponse {
+  ok: boolean;
+  status: number;
+  body: string;
+}
+
+chrome.runtime.onMessage.addListener((message: ConvaiHttpRequest, _sender, sendResponse) => {
+  if (message?.kind !== "convai-http") return undefined;
+
+  (async () => {
+    try {
+      const response = await fetch(message.url, {
+        method: message.method,
+        headers: message.body ? { "Content-Type": "application/json" } : undefined,
+        body: message.body,
+      });
+      const body = await response.text();
+      sendResponse({ ok: response.ok, status: response.status, body } satisfies ConvaiHttpResponse);
+    } catch {
+      sendResponse({ ok: false, status: 0, body: "" } satisfies ConvaiHttpResponse);
+    }
+  })();
+
+  return true; // keeps the message channel open for the async sendResponse above
+});
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== INTERVIEW_PORT_NAME) return;
 

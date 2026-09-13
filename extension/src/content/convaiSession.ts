@@ -34,6 +34,25 @@ function backendUrl(path: string): string {
   return `${base}${path}${separator}token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * Relays a REST call through the background service worker instead of
+ * calling fetch() here directly — leetcode.com's CSP blocks a content
+ * script's own network requests to the local backend exactly like it
+ * blocked the real WebSocket (architecture.md §B.1); only the extension
+ * context is exempt. See background/index.ts's onMessage handler.
+ */
+async function backendFetch(
+  url: string,
+  init?: { method?: "GET" | "POST"; body?: string },
+): Promise<{ ok: boolean; status: number; body: string }> {
+  return chrome.runtime.sendMessage({
+    kind: "convai-http",
+    url,
+    method: init?.method ?? "GET",
+    body: init?.body,
+  });
+}
+
 export function hasActiveConvaiSession(): boolean {
   return sessionStarted;
 }
@@ -56,12 +75,12 @@ export async function startConvaiSession(): Promise<ConvaiSocket | null> {
 
   let signedUrl: string;
   try {
-    const response = await fetch(backendUrl("/api/convai/signed-url"));
+    const response = await backendFetch(backendUrl("/api/convai/signed-url"));
     if (!response.ok) {
-      console.error("[ai-mock-interview] convai signed-url request failed", await response.text());
+      console.error("[ai-mock-interview] convai signed-url request failed", response.body);
       return null;
     }
-    ({ signed_url: signedUrl } = (await response.json()) as { signed_url: string });
+    ({ signed_url: signedUrl } = JSON.parse(response.body) as { signed_url: string });
   } catch (error) {
     console.error("[ai-mock-interview] convai signed-url request errored", error);
     return null;
@@ -115,16 +134,15 @@ export async function endConvaiSession(): Promise<Record<string, unknown> | null
   const capturedTranscript = transcript;
 
   try {
-    const response = await fetch(backendUrl("/api/convai/review"), {
+    const response = await backendFetch(backendUrl("/api/convai/review"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ problem, language, transcript: capturedTranscript, started_at: 0 }),
     });
     if (!response.ok) {
-      console.error("[ai-mock-interview] convai review request failed", await response.text());
+      console.error("[ai-mock-interview] convai review request failed", response.body);
       return null;
     }
-    return (await response.json()) as Record<string, unknown>;
+    return JSON.parse(response.body) as Record<string, unknown>;
   } catch (error) {
     console.error("[ai-mock-interview] convai review request errored", error);
     return null;
