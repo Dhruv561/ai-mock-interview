@@ -5,7 +5,7 @@ import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
 import { useScreenCapture } from "../media/useScreenCapture";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
-import { usePanelLayout } from "../state/panelLayout";
+import type { PanelLayout } from "../state/panelLayout";
 import { useLiveInterviewEngine } from "../state/liveInterviewEngine";
 import { useInterview } from "../state/interviewStore";
 import { LayoutSwitcher } from "./LayoutSwitcher";
@@ -30,15 +30,24 @@ const MAX_HINT_LEVEL = 3;
  * Body rendering is a choice of three layout presets (state/panelLayout.ts,
  * Feature 18) — docked/floating/split — all reading the same real state and
  * handlers via PanelBodyProps, arranged differently per components/panels/*.
+ * `layout`/`setLayout` are owned one level up (content/App.tsx) rather than
+ * here, because the "floating" preset also changes the outer shell's own
+ * fixed positioning (a bottom-anchored bar instead of a full-height right
+ * column) — App.tsx needs the current layout to choose that shell.
  */
-export function InterviewPanel() {
+export function InterviewPanel({
+  layout,
+  setLayout,
+}: {
+  layout: PanelLayout;
+  setLayout: (layout: PanelLayout) => void;
+}) {
   const { state, dispatch } = useInterview();
   const socket = getInterviewSocket();
   const mic = useMicrophoneCapture(socket);
   const screenCapture = useScreenCapture(socket);
   const stage = useInterviewStage(socket);
   const audio = useInterviewerAudioPlayback(socket);
-  const { layout, setLayout } = usePanelLayout();
   useLiveInterviewEngine(socket, state.elapsedSeconds, dispatch);
   const [micBlockedReason, setMicBlockedReason] = useState<MicBlockedReason | null>(null);
 
@@ -76,6 +85,9 @@ export function InterviewPanel() {
   }
 
   const isActive = state.status === "recording";
+  // Kept in sync with content/App.tsx's own isFloating check, which decides
+  // the outer shell (bottom-anchored bar vs. full-height right column).
+  const isFloatingActive = isActive && layout === "floating";
 
   const panelBodyProps: PanelBodyProps = {
     state,
@@ -93,11 +105,25 @@ export function InterviewPanel() {
   };
 
   return (
-    <div className="flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink">
-      <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
+    <div
+      className={
+        isFloatingActive
+          ? "flex w-full flex-col"
+          : "flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink"
+      }
+    >
+      {/*
+       * The floating bar's own compact status row (FloatingPanel: clock,
+       * stage, audio meter) already covers what StatusIndicator shows, so
+       * skip it here rather than stacking a second, full-width status strip
+       * on top of the "minimal posture" the design intends for 1b.
+       */}
+      {!isFloatingActive && (
+        <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
+      )}
 
       {isActive && (
-        <div className="flex justify-end px-5 py-2">
+        <div className={isFloatingActive ? "flex justify-end px-3 pt-2" : "flex justify-end px-5 py-2"}>
           <LayoutSwitcher value={layout} onChange={setLayout} />
         </div>
       )}
