@@ -549,10 +549,16 @@ Proceed to Phase 7 (Feature 10 — ElevenLabs TTS) per `TODO.md`.
 # Feature 09 — Code analysis
 
 ## Status
-PLANNED
+IN_PROGRESS
 
 ## Priority
 P1
+
+## started_at
+2026-09-13
+
+## Current task
+Implementing `agents/code_analyser.py` (Python `ast`-based static analysis) in an isolated worktree, in parallel with Features 11/13, wired into the existing `code_analysis_observations` field already reserved on `InterviewState`.
 
 ## Acceptance criteria
 - [ ] meaningful code snapshots can be analysed
@@ -566,10 +572,10 @@ P1
 - None yet.
 
 ## Remaining
-- All implementation work.
+- All implementation work (in progress).
 
 ## Next action
-Implement basic AST/static analysis and structured analysis output.
+Merge the worktree branch, run backend tests, update this record.
 
 ---
 
@@ -641,10 +647,16 @@ Whenever a real `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` become available: run
 # Feature 11 — Tiered hints
 
 ## Status
-PLANNED
+IN_PROGRESS
 
 ## Priority
 P1
+
+## started_at
+2026-09-13
+
+## Current task
+Implementing per-level hint prompts (`interview/prompts.py`) plus rubric evidence wiring (Feature 13, same slice — both live in `controller.py`/`prompts.py`/`websocket/interview.py`) in an isolated worktree, in parallel with Feature 09.
 
 ## Acceptance criteria
 - [ ] Hint 1 is conceptual
@@ -658,10 +670,10 @@ P1
 - None yet.
 
 ## Remaining
-- All implementation work.
+- All implementation work (in progress).
 
 ## Next action
-Implement hint policy and UI flow.
+Merge the worktree branch, run backend tests, update this record.
 
 ---
 
@@ -694,26 +706,32 @@ Implement recording manager and browser permissions.
 # Feature 13 — Live rubric
 
 ## Status
-PLANNED
+IN_PROGRESS
 
 ## Priority
 P1
+
+## started_at
+2026-09-13
+
+## Current task
+Same slice as Feature 11 (see that record) — rubric_updates already exist as an optional field on `InterviewerAction`; this closes the loop: controller applies + clamps them onto `InterviewState.rubric`/a new evidence history, and `websocket/interview.py` emits `rubric.updated` events. Per architecture.md §O, the extension's live panel deliberately does NOT render rubric during the interview — this is backend-only plus data available for Feature 14's review screen.
 
 ## Acceptance criteria
 - [ ] rubric categories are defined
 - [ ] scores update based on evidence
 - [ ] updates are not excessively noisy
-- [ ] UI reflects scores
+- [ ] UI reflects scores (N/A live, per architecture.md §O — deferred to Feature 14's review screen)
 - [ ] score changes can be traced to evidence
 
 ## Completed
 - None yet.
 
 ## Remaining
-- All implementation work.
+- All implementation work (in progress).
 
 ## Next action
-Implement rubric schema and update rules.
+Merge the worktree branch, run backend tests, update this record.
 
 ---
 
