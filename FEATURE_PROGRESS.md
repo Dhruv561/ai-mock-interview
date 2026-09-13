@@ -707,10 +707,16 @@ Whenever a real `ANTHROPIC_API_KEY` is available: run a real interview through a
 # Feature 12 — Screen/tab recording
 
 ## Status
-PLANNED
+IN_PROGRESS
 
 ## Priority
 P1
+
+## started_at
+2026-09-13
+
+## Current task
+Extension-only slice (mirrors Feature 05's microphone module exactly): `media/screen.ts` + `useScreenCapture.ts`, wired into the same Start/End handlers as mic capture in `InterviewPanel.tsx`. Running in parallel with Feature 15 (persistence, backend-only — zero file overlap).
 
 ## Acceptance criteria
 - [ ] user understands recording state
@@ -723,10 +729,10 @@ P1
 - None yet.
 
 ## Remaining
-- All implementation work.
+- All implementation work (in progress).
 
 ## Next action
-Implement recording manager and browser permissions.
+Merge, run full extension test/typecheck/lint/build, update this record.
 
 ---
 
@@ -833,10 +839,16 @@ Whenever a real `ANTHROPIC_API_KEY` is available: run a full interview end-to-en
 # Feature 15 — Persistence
 
 ## Status
-PLANNED
+IN_PROGRESS
 
 ## Priority
 P1
+
+## started_at
+2026-09-13
+
+## Current task
+Backend-only slice: `SessionRepository` interface + `InMemoryRepository` (default) + `PostgresRepository`, wired into `websocket/interview.py`'s session lifecycle. Running in parallel with Feature 12 (screen recording, extension-only — zero file overlap).
 
 ## Acceptance criteria
 - [ ] interview sessions persist
@@ -849,10 +861,10 @@ P1
 - None yet.
 
 ## Remaining
-- All implementation work.
+- All implementation work (in progress).
 
 ## Next action
-Create the minimum required Supabase/Postgres schema and repository layer.
+Merge, run full backend test/lint, update this record.
 
 ---
 
