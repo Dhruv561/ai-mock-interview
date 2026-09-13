@@ -176,6 +176,7 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 | 14 | End interview and review | PLANNED | P0 |
 | 15 | Persistence | PLANNED | P1 |
 | 16 | Integration hardening and demo readiness | PLANNED | P0 |
+| 17 | Resizable interview panel | IMPLEMENTED | P2 |
 
 ## Decisions log (Phase 6 addendum / transport fix)
 
@@ -183,3 +184,4 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 |---|---|---|
 | 2026-09-13 | The background service worker owns the WebSocket; the content script talks to it over a `chrome.runtime` port — **reverses** `architecture.md` §B's "content script owns the WS connection" | Forced, not preferred: leetcode.com's `default-src 'none'; connect-src 'self' https://challenges.cloudflare.com` CSP blocks any page-context connection to the local backend, verified by zero inbound attempts reaching a debug-logging backend during a full page load, while a service-worker probe connected first try from the same build. §B's original eviction concern is preserved by keeping all session state in the content script and making the worker a stateless pipe. Full record in `architecture.md` §B.1 |
 | 2026-09-13 | Mic audio is base64-encoded across the runtime port rather than moving capture into an offscreen document | `chrome.runtime` ports are JSON-only. ~33% overhead on a ~4.8KB chunk every 250ms is acceptable and was verified working live; an offscreen document is a larger change that shouldn't be made speculatively. Documented as the escape hatch if it ever bites |
+| 2026-09-13 | Panel width became resizable (drag handle, like Chrome's built-in side panel), clamped to 320–min(720, 60vw)px and persisted via `chrome.storage.local`, superseding the fixed 420px from Feature 02 | User request, out of `FEATURE_PROGRESS.md`'s original sequencing (added as Feature 17, P2) — bounded change to the existing panel/layout code, not a new subsystem, so no architecture.md update was needed |
