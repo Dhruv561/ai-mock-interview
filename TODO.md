@@ -102,7 +102,7 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 11 — Persistence + end-to-end hardening (Feature 15, 16)
 
-- [ ] `persistence/repository.py`, `in_memory.py`, `postgres.py`
+- [x] `persistence/repository.py`, `in_memory.py`, `postgres.py`
 - [ ] Full happy-path integration test: `start → transcript → code_update → question → hint → end → review`
 - [ ] README setup verified from a clean checkout
 - [ ] Repeated full manual runs; fix latency/race/UI-overflow/state bugs found

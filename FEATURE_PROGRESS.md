@@ -848,7 +848,7 @@ Whenever a real `ANTHROPIC_API_KEY` is available: run a full interview end-to-en
 # Feature 15 — Persistence
 
 ## Status
-IN_PROGRESS
+VERIFIED (not DONE — see Verification)
 
 ## Priority
 P1
@@ -857,23 +857,34 @@ P1
 2026-09-13
 
 ## Current task
-Backend-only slice: `SessionRepository` interface + `InMemoryRepository` (default) + `PostgresRepository`, wired into `websocket/interview.py`'s session lifecycle. Running in parallel with Feature 12 (screen recording, extension-only — zero file overlap).
+Complete except live-database verification — needs a real `DATABASE_URL` (no Postgres/Supabase instance configured in this environment). The in-memory default path is fully implemented and exercised by tests; `PostgresRepository` is implemented against asyncpg's documented API but has never connected to a real database.
 
 ## Acceptance criteria
-- [ ] interview sessions persist
-- [ ] transcript persists
-- [ ] relevant code snapshots/events persist
-- [ ] final review persists
-- [ ] secrets remain protected
+- [x] interview sessions persist — `create_session` called from the `SessionStartEvent` branch
+- [x] transcript persists — folds into `append_event`, called from `_emit`'s chokepoint (every event, transcript included, already passes through there)
+- [x] relevant code snapshots/events persist — same `append_event` path covers code-analysis-driven reactions, hints, rubric updates, and stage transitions
+- [x] final review persists — dedicated `save_final_review`, called after `generate_final_review` succeeds
+- [x] secrets remain protected — `DATABASE_URL` stays a server-side `Settings` field, never touches extension code
 
 ## Completed
-- None yet.
+- `backend/app/persistence/repository.py` — `SessionRepository` Protocol (`create_session`, `append_event`, `save_final_review`, `get_session`).
+- `backend/app/persistence/in_memory.py` — `InMemoryRepository`, the default; module-level shared dict so sessions accumulate into one store across per-session instances.
+- `backend/app/persistence/postgres.py` — `PostgresRepository` via `asyncpg`, lazily-created pool guarded by an `asyncio.Lock`.
+- `backend/app/persistence/schema.sql` — `interview_sessions` table (id, problem jsonb, language, started_at, status, events jsonb, final_review jsonb, created_at); applied by hand, no migration framework.
+- `backend/app/persistence/__init__.py` — `get_repository(settings)` factory, same shape as the STT/TTS/LLM provider factories.
+- `backend/app/websocket/interview.py` — repository resolved once per session (stored on `SessionRecord`), writes fire-and-forget (`asyncio.create_task`, logged + swallowed on failure) so a slow/dead database can never block or crash the live interview — same posture as TTS/STT failure handling elsewhere in this file.
+- `asyncpg` added via `uv add` (pyproject.toml + lockfile).
+- Tests: `backend/tests/test_persistence.py` (11 tests — in-memory CRUD/ordering/shape, shared-store behaviour, factory selection, Postgres construction-only smoke test) + one new integration test in `test_websocket_interview.py` (fake repository injected via monkeypatch, asserts call counts across a full `session.start → session.end` flow).
+- `architecture.md` §Q updated with an "Implementation notes" section and corrected to match what was actually built (method names, single collapsed `events` column vs. the original sketch's separate transcript/code_snapshots/rubric_history columns, `schema.sql` instead of a `database.py`).
 
 ## Remaining
-- All implementation work (in progress).
+- Live-database verification only (see Next action).
+
+## Verification
+`cd backend && uv run pytest -q` → 194/194 passed (up from 182). `uv run ruff check .` → clean. Re-run and confirmed by the orchestrator after merge.
 
 ## Next action
-Merge, run full backend test/lint, update this record.
+Whenever a real Supabase/Postgres `DATABASE_URL` is available: run `psql $DATABASE_URL -f backend/app/persistence/schema.sql`, set `USE_MOCK_PROVIDERS=false` + `DATABASE_URL`, run a real interview session end-to-end, and confirm rows land in `interview_sessions` with populated `events`/`final_review` columns — then flip to `DONE`.
 
 ---
 
