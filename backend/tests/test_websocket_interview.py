@@ -206,6 +206,52 @@ def test_stt_provider_start_failure_degrades_gracefully(monkeypatch):
         assert error["code"] == "session_not_found"
 
 
+def test_stt_send_failure_degrades_gracefully(monkeypatch):
+    """architecture.md §V: distinct from the start-failure test above — here
+    the STT connection succeeds initially, then a later send_audio() call on
+    an already-established session fails (the provider dropped mid-session).
+    That must emit `error {code: "stt_unavailable"}`, clear stt_session (so
+    later audio is silently dropped, not fatal), and keep the WS session
+    alive — none of that behavior was covered anywhere before this test."""
+
+    class FailingSession:
+        async def send_audio(self, chunk: bytes) -> None:
+            raise ConnectionError("upstream dropped")
+
+        async def close(self) -> None:
+            pass
+
+    class OneShotProvider:
+        async def start_session(self, on_partial, on_final):
+            return FailingSession()
+
+    monkeypatch.setattr(ws_module, "get_stt_provider", lambda settings: OneShotProvider())
+
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        assert started["type"] == "session.started"
+        ws.receive_json()  # interviewer.state
+
+        ws.send_bytes(b"some-audio")
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "stt_unavailable"
+        assert error["recoverable"] is True
+
+        record = ws_module.sessions.get(session_id)
+        assert record is not None
+        assert record.stt_session is None
+
+        # a further audio frame is now just silently dropped, not fatal —
+        # proven by the connection still being usable afterward
+        ws.send_bytes(b"more-audio")
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        not_found = ws.receive_json()
+        assert not_found["code"] == "session_not_found"
+
+
 def test_code_update_and_hint_requested_persist_into_session_state():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
