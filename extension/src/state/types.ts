@@ -5,8 +5,8 @@
 //
 // The real interview stage is tracked separately, by
 // networking/useInterviewStage.ts (driven directly off interviewer.state
-// events) and passed to panels via PanelBodyProps.stage — there used to be
-// a second, parallel `InterviewStage` here plus a `stage/set` action and an
+// events) and passed straight to StageBadge — there used to be a second,
+// parallel `InterviewStage` here plus a `stage/set` action and an
 // `InterviewUIState.stage` field, but nothing ever dispatched that action,
 // so it always sat frozen at its initial value (Feature 20 cleanup;
 // removed rather than kept as a second source of truth).

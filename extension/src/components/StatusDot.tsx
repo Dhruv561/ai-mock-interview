@@ -1,8 +1,8 @@
 /**
- * Shared dot+label primitive behind MicBadge/ScreenBadge/SpeakingBadge/
- * ConnectionBadge — those four repeated this exact markup verbatim, each
- * with their own status->label/tone maps (Feature 20 cleanup). StageBadge
- * is deliberately not built on this: it has no dot, just a label.
+ * Shared dot+label primitive behind MicBadge/SpeakingBadge/ConnectionBadge —
+ * those repeated this exact markup verbatim, each with their own
+ * status->label/tone maps (Feature 20 cleanup). StageBadge is deliberately
+ * not built on this: it has no dot, just a label.
  */
 export function StatusDot({
   label,

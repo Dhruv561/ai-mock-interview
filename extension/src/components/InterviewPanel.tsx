@@ -14,11 +14,14 @@ import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
 import { useLiveInterviewEngine } from "../state/liveInterviewEngine";
 import { useInterview } from "../state/interviewStore";
-import { DockedPanel } from "./panels/DockedPanel";
-import type { PanelBodyProps } from "./panels/PanelBodyProps";
+import { EndReviewButton } from "./EndReviewButton";
+import { HintButton } from "./HintButton";
+import { MicBadge } from "./MicBadge";
 import { Review } from "./Review";
+import { StageBadge } from "./StageBadge";
 import { StartScreen, type MicBlockedReason } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
+import { Transcript } from "./Transcript";
 
 const MAX_HINT_LEVEL = 3;
 
@@ -30,12 +33,15 @@ const MAX_HINT_LEVEL = 3;
  * content/interviewSession.ts), so nothing the interviewer says can arrive
  * before the candidate has actually started.
  *
- * Body rendering is a single fixed "docked" layout (components/panels/
- * DockedPanel.tsx) — the original full-presence posture this panel shipped
- * with. The floating/split presets and the layout switcher that used to sit
- * above the panel were removed by user request (2026-09-13): the pipeline
- * work underneath (hints, rubric, TTS) stays, only the layout-comparison UI
- * was dropped. See architecture.md/progress.md for the full record.
+ * Body rendering matches Dhruv Verma's original visual UI exactly (commit
+ * 596fe96, restored by user request 2026-09-13): a plain stack of
+ * MicBadge/StageBadge/Transcript plus the two action buttons, replacing the
+ * dark-panel "DockedPanel" redesign (Features 10/13/18) that had sat here.
+ * The pipeline work underneath (hints, TTS audio playback, screen capture)
+ * still runs exactly as before — this file only lost the newer visual
+ * surface for it (TTS mute button/level meter, screen-share status line),
+ * not the underlying functionality. See architecture.md/progress.md for
+ * the full record.
  */
 export function InterviewPanel() {
   const { state, dispatch } = useInterview();
@@ -43,7 +49,10 @@ export function InterviewPanel() {
   const mic = useMicrophoneCapture(socket);
   const screenCapture = useScreenCapture(socket);
   const stage = useInterviewStage(socket);
-  const audio = useInterviewerAudioPlayback(socket);
+  // TTS audio still plays automatically via this hook's own effects — no
+  // meter/mute UI surfaces it anymore (see header comment), so its return
+  // value goes unused here.
+  useInterviewerAudioPlayback(socket);
   useLiveInterviewEngine(socket, state.elapsedSeconds, dispatch);
   const [micBlockedReason, setMicBlockedReason] = useState<MicBlockedReason | null>(null);
 
@@ -80,24 +89,6 @@ export function InterviewPanel() {
     dispatch({ type: "session/end" });
   }
 
-  const isActive = state.status === "recording";
-
-  const panelBodyProps: PanelBodyProps = {
-    state,
-    micStatus: mic.status,
-    getMicAnalyser: mic.getAnalyser,
-    screenStatus: screenCapture.status,
-    isSpeaking: audio.isSpeaking,
-    isMuted: audio.isMuted,
-    onToggleMute: audio.toggleMute,
-    getTtsAnalyser: audio.getAnalyser,
-    stage,
-    liveRubric: null,
-    onHint: handleHint,
-    hintDisabled: state.hints.length >= MAX_HINT_LEVEL,
-    onEnd: handleEnd,
-  };
-
   return (
     <div className="flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink">
       <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
@@ -106,14 +97,24 @@ export function InterviewPanel() {
         <StartScreen onStart={handleStart} micBlockedReason={micBlockedReason ?? undefined} />
       )}
 
-      {/*
-       * Deliberate deviation from PRD §3.3 / docs/ui-reference.png, which
-       * show a live "RUBRIC SO FAR" section: product decision (2026-09-12)
-       * to only reveal scores on the Review screen so candidates aren't
-       * watching live numbers during the interview. See architecture.md §1
-       * and progress.md decisions log.
-       */}
-      {isActive && <DockedPanel {...panelBodyProps} />}
+      {state.status === "recording" && (
+        <>
+          {/*
+           * Deliberate deviation from PRD §3.3 / docs/ui-reference.png,
+           * which show a live "RUBRIC SO FAR" section: product decision
+           * (2026-09-12) to only reveal scores on the Review screen so
+           * candidates aren't watching live numbers during the interview.
+           * See architecture.md §1 and progress.md decisions log.
+           */}
+          <MicBadge status={mic.status} />
+          <StageBadge stage={stage} />
+          <Transcript messages={state.messages} />
+          <div className="flex gap-2 px-5 py-4">
+            <HintButton onClick={handleHint} disabled={state.hints.length >= MAX_HINT_LEVEL} />
+            <EndReviewButton onClick={handleEnd} />
+          </div>
+        </>
+      )}
 
       {state.status === "ended" && state.review && (
         <Review review={state.review} onRestart={handleStart} />
