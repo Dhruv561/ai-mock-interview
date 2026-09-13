@@ -62,8 +62,36 @@ export function connectConvaiSocket(
   const eventHandlers = new Set<(event: ConvaiEvent) => void>();
   const closeHandlers = new Set<() => void>();
 
+  // The agent's automatic greeting (first_message) can arrive within
+  // roughly a second of the socket opening — well before the caller's real
+  // consumers (components/ConvaiInterviewPanel.tsx's transcript-engine and
+  // audio-playback hooks) actually subscribe via onEvent(), since those
+  // only attach once React re-renders with this socket in state, which
+  // that panel deliberately delays until after a real getUserMedia()
+  // permission round trip (multiple seconds for a first-time grant).
+  // Buffer everything emitted before any handler exists so the greeting
+  // isn't silently dropped by that gap. Both real consumers subscribe
+  // synchronously back-to-back (two effects flushed in the same React
+  // commit, no await between them) — queueMicrotask defers the flush just
+  // long enough for the second one to attach before we stop buffering,
+  // without needing to hardcode "wait for exactly two subscribers".
+  let buffering = true;
+  const buffer: ConvaiEvent[] = [];
+
   function emit(event: ConvaiEvent) {
+    if (buffering) {
+      buffer.push(event);
+      return;
+    }
     for (const handler of eventHandlers) handler(event);
+  }
+
+  function stopBufferingAndFlush() {
+    if (!buffering) return;
+    buffering = false;
+    for (const event of buffer.splice(0, buffer.length)) {
+      for (const handler of eventHandlers) handler(event);
+    }
   }
 
   ws.addEventListener("open", () => {
@@ -156,6 +184,7 @@ export function connectConvaiSocket(
   return {
     onEvent(handler) {
       eventHandlers.add(handler);
+      if (buffering) queueMicrotask(stopBufferingAndFlush);
       return () => eventHandlers.delete(handler);
     },
     onClose(handler) {
