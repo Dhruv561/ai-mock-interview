@@ -42,6 +42,7 @@ function fakePlayer() {
     }),
     isMuted: vi.fn(() => muted),
     getAnalyser: vi.fn(() => null),
+    dispose: vi.fn(),
   };
 }
 
@@ -113,5 +114,17 @@ describe("useInterviewerAudioPlayback", () => {
     act(() => result.current.toggleMute());
     expect(player.setMuted).toHaveBeenCalledWith(false);
     expect(result.current.isMuted).toBe(false);
+  });
+
+  it("disposes the player on unmount, releasing its AudioContext", () => {
+    const player = fakePlayer();
+    vi.mocked(interviewerAudioPlayer.createInterviewerAudioPlayer).mockReturnValue(player);
+    const { socket } = fakeSocket();
+
+    const { unmount } = renderHook(() => useInterviewerAudioPlayback(socket));
+    expect(player.dispose).not.toHaveBeenCalled();
+
+    unmount();
+    expect(player.dispose).toHaveBeenCalledTimes(1);
   });
 });

@@ -8,9 +8,9 @@ Backing store is a module-level dict shared by every `InMemoryRepository`
 instance, not a fresh dict per instance. This matters because
 websocket/interview.py resolves one repository per *session* (via
 `get_repository(settings)`, called once at session.start and stored on the
-SessionRecord — mirroring how one STTSession is opened per session rather
-than per event), the same way `get_llm_provider`/`get_tts_provider` are
-called fresh each time they're needed. If `InMemoryRepository.__init__`
+SessionRecord — mirroring how one STTSession, LLMProvider and TTSProvider
+are each resolved once per session rather than per event, see
+websocket/interview.py's SessionRecord). If `InMemoryRepository.__init__`
 owned a private `dict`, every session would get its own isolated,
 single-session store, and `get_session` would be unable to see any session
 other than the one that created that particular instance — defeating the

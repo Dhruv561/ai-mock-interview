@@ -51,14 +51,14 @@ export default defineManifest({
     "https://leetcode.com/*",
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*",
-    // Convai spike (spikes/elevenlabs-convai/) manual-test port — this repo's
-    // default dev port (8000, above) was already occupied by another
+    // Convai pipeline (backend/app/api/convai.py) manual-test port — this
+    // repo's default dev port (8000, above) was already occupied by another
     // worktree's backend on the machine this was tested from. Same
     // extension-privileged-fetch reasoning as the 8000 entry: the
     // background worker's fetch() relay to /api/convai/* (background/
     // index.ts) needs this to read the response body.
     "http://127.0.0.1:8010/*",
-    // Feature 17: the VPS-hosted backend (DEPLOY.md), reachable over plain
+    // Feature 19: the VPS-hosted backend (DEPLOY.md), reachable over plain
     // HTTP on a dedicated nginx port (no domain/TLS assigned yet). Kept
     // alongside the localhost entries above so the same built extension
     // works against either a local dev backend or the deployed one,

@@ -23,16 +23,18 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
 
-    # ElevenLabs Conversational AI (spike only — see
-    # spikes/elevenlabs-convai/README.md and progress.md's "Spike" section;
-    # not part of the real interview pipeline). The agent itself is created
-    # out-of-band by spikes/elevenlabs-convai/create_agent.py, not by this
-    # backend — this is just the id the signed-url endpoint needs.
+    # ElevenLabs Conversational AI — the default interview pipeline as of
+    # Feature 21 (architecture.md §5), not a fallback setting. The agent
+    # itself is created out-of-band by spikes/elevenlabs-convai/
+    # create_agent.py, not by this backend — this is just the id the
+    # /api/convai/signed-url endpoint needs.
     elevenlabs_convai_agent_id: str | None = None
 
-    # Persistence (optional — falls back to in-memory when unset)
-    supabase_url: str | None = None
-    supabase_service_role_key: str | None = None
+    # Persistence (optional — falls back to in-memory when unset). A
+    # Supabase-hosted Postgres works here too: this is a direct asyncpg
+    # connection string, not the Supabase client SDK, so there is no
+    # separate Supabase URL/service-role-key setting to configure
+    # (Feature 20 cleanup — those two were declared but never read).
     database_url: str | None = None
 
     # Server
@@ -44,7 +46,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     use_mock_providers: bool = True
 
-    # --- Deployment-only safeguards (Feature 17) ---
+    # --- Deployment-only safeguards (Feature 19) ---
     # All three default to "off" so local dev (and the existing test suite)
     # behave exactly as before. They only need setting once the backend is
     # reachable from somewhere other than the developer's own machine — see

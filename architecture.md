@@ -25,9 +25,11 @@ The PRD leaves technology choices open in several places ("an LLM API suitable f
 | Code static analysis | Python `ast` module only, for Python submissions. Other languages get LLM-only analysis, no static parser | Writing multi-language static analyzers is out of scope for a hackathon; Python is the default/demo language on LeetCode |
 | Monorepo tooling | npm workspaces for `extension/` + `shared/`; `backend/` is a separate `uv`-managed Python project at the repo root, invoked by `scripts/dev.sh` | No need for Turborepo/Nx at this scale; two ecosystems (npm, uv) coexist fine as sibling directories |
 
-**Addendum (2026-09-13) — panel layout presets, live candidate transcript, audio level meters.** A Claude Design canvas ("Interview Sidebar", imported via the `claude_design`/DesignSync MCP) explored three postures for the panel: docked (full presence), floating (minimal bottom bar), split (scrolling transcript + rubric-shaped column, closest to what already existed). Rather than pick one, all three were implemented as selectable presets (`extension/src/state/panelLayout.ts`, `components/panels/*`) sharing the same real state/handlers — see FEATURE_PROGRESS.md Feature 17 for the full breakdown, including what was deliberately *not* carried over from the design (the live rubric section, a fabricated session-integrity indicator, per-phase timestamps, a literal push-to-talk button, Google Fonts, and a second page-width overlay layout mode) and why. Two other reversals from that work:
+**Addendum (2026-09-13) — panel layout presets, live candidate transcript, audio level meters.** A Claude Design canvas ("Interview Sidebar", imported via the `claude_design`/DesignSync MCP) explored three postures for the panel: docked (full presence), floating (minimal bottom bar), split (scrolling transcript + rubric-shaped column, closest to what already existed). Rather than pick one, all three were implemented as selectable presets (`extension/src/state/panelLayout.ts`, `components/panels/*`) sharing the same real state/handlers — see FEATURE_PROGRESS.md Feature 18 for the full breakdown, including what was deliberately *not* carried over from the design (the live rubric section, a fabricated session-integrity indicator, per-phase timestamps, a literal push-to-talk button, Google Fonts, and a second page-width overlay layout mode) and why. Two other reversals from that work:
 - `transcript.partial` (candidate speech mid-utterance) was previously dropped entirely (see the old comment in `state/liveInterviewEngine.ts`); it now drives a single live "draft" line (`state.candidateDraft`) that each partial replaces in place, cleared once `transcript.final` lands. This was an explicit, requested reversal of a prior decision, not a silent one.
 - Both mic input and TTS playback now expose a passive `AnalyserNode` (`media/microphone.ts`, `media/interviewerAudioPlayer.ts`) feeding a real, data-driven level meter (`media/useAudioLevels.ts`, `components/AudioLevelMeter.tsx`) instead of a decorative CSS animation — the mic analyser is never connected onward to `destination`, so it cannot cause audio feedback.
+
+**Further addendum (2026-09-13, same day) — floating preset gets its own overlay shell.** The line above ("a second page-width overlay layout mode" was deliberately not carried over) was reversed after user feedback that the "floating" preset still rendered inside the docked panel's full-height right-side column, not floating above the code like the design reference. `content/App.tsx` now owns a `PanelShell` that picks the outer container per layout: docked/split (and floating whenever the interview isn't actually recording/paused) keep the existing fixed full-height right column; floating-while-active gets a fixed, bottom-anchored, content-sized bar (`fixed inset-x-0 bottom-6`) centered over the page and releases the reserved page margin (`content/layout.ts`'s `releasePageSpace`) instead of reserving it, so the code editor regains its full width rather than being pushed aside for a bar that no longer sits in the column. `layout`/`setLayout` moved up from `InterviewPanel` to `App.tsx` (passed down as props) since the shell choice needs them. This is still one page-space model at a time — reserved-column *or* released-overlay, never both — not a second permanent layout mode; see FEATURE_PROGRESS.md Feature 18 for the acceptance-criteria update.
 
 ---
 
@@ -437,11 +439,11 @@ error                      { code: str, message: str, recoverable: bool }
 ### T. Deployment
 
 - **Responsibility:** get a working demo running reliably.
-- **Decision:** default to running both extension (loaded unpacked) and backend **locally** during the actual hackathon demo — lowest latency, no dependency on third-party hosting uptime during judging. A hosted backend (VPS/Render/Cloud Run/etc., single instance, no autoscaling needed) is an optional path for remote/judge-accessible demos — see `DEPLOY.md` and Feature 17.
-- **Files (Feature 17, built):** `backend/Dockerfile` (two-stage, `uv`-based, non-root), `backend/.dockerignore`, `docker-compose.yml` (repo root, local Docker-based testing), `.github/workflows/docker-publish.yml` (builds and pushes the image to `ghcr.io/<owner>/<repo>-backend` on push to `main`, so any Docker-capable host can `docker pull` a known tag instead of rebuilding from source).
-- **Deployment-only safeguards (Feature 17, backend has none of this by default):** the WS handshake, concurrent-session count, and session duration are all optionally gated — see §U's `SESSION_SHARED_SECRETS`/`MAX_CONCURRENT_SESSIONS`/`SESSION_MAX_DURATION_SECONDS`. All three default to off; local dev and every existing test run with auth/limits disabled, unchanged from before Feature 17.
-- **Testing strategy:** README setup instructions themselves are the test — verified by following them on a clean checkout before calling Feature 16 done. The Docker image itself was verified by building, running, and hitting `/health` (see FEATURE_PROGRESS.md Feature 17) rather than assumed from the Dockerfile alone.
-- **Done when:** Feature 16 acceptance criteria met for the local path. Hosted deploy is optional stretch scope (PRD §17), tracked separately as Feature 17.
+- **Decision:** default to running both extension (loaded unpacked) and backend **locally** during the actual hackathon demo — lowest latency, no dependency on third-party hosting uptime during judging. A hosted backend (VPS/Render/Cloud Run/etc., single instance, no autoscaling needed) is an optional path for remote/judge-accessible demos — see `DEPLOY.md` and Feature 19.
+- **Files (Feature 19, built):** `backend/Dockerfile` (two-stage, `uv`-based, non-root), `backend/.dockerignore`, `docker-compose.yml` (repo root, local Docker-based testing), `.github/workflows/docker-publish.yml` (builds and pushes the image to `ghcr.io/<owner>/<repo>-backend` on push to `main`, so any Docker-capable host can `docker pull` a known tag instead of rebuilding from source).
+- **Deployment-only safeguards (Feature 19, backend has none of this by default):** the WS handshake, concurrent-session count, and session duration are all optionally gated — see §U's `SESSION_SHARED_SECRETS`/`MAX_CONCURRENT_SESSIONS`/`SESSION_MAX_DURATION_SECONDS`. All three default to off; local dev and every existing test run with auth/limits disabled, unchanged from before Feature 19.
+- **Testing strategy:** README setup instructions themselves are the test — verified by following them on a clean checkout before calling Feature 16 done. The Docker image itself was verified by building, running, and hitting `/health` (see FEATURE_PROGRESS.md Feature 19) rather than assumed from the Dockerfile alone.
+- **Done when:** Feature 16 acceptance criteria met for the local path. Hosted deploy is optional stretch scope (PRD §7), tracked separately as Feature 19.
 
 ### U. Secrets/environment variables
 
@@ -453,16 +455,14 @@ ANTHROPIC_API_KEY=
 DEEPGRAM_API_KEY=
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=
-SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
-DATABASE_URL=              # optional direct Postgres connection string, alternative to Supabase client
+DATABASE_URL=              # optional direct Postgres connection string (works against Supabase-hosted Postgres too)
 BACKEND_HOST=0.0.0.0
 BACKEND_PORT=8000
 ALLOWED_ORIGINS=chrome-extension://<dev-extension-id>,https://leetcode.com
 APP_ENV=local               # local | staging | production
 USE_MOCK_PROVIDERS=true     # forces mocks even if keys are present — safe default for local dev
 
-# Deployment-only safeguards (Feature 17) — all default to off/unlimited,
+# Deployment-only safeguards (Feature 19) — all default to off/unlimited,
 # so this section only matters once the backend is reachable from
 # somewhere other than the developer's own machine. See DEPLOY.md.
 SESSION_SHARED_SECRETS=          # comma-separated; empty = no auth check at all (today's behaviour)
@@ -470,8 +470,8 @@ MAX_CONCURRENT_SESSIONS=0        # 0 = unlimited; caps worst-case provider spend
 SESSION_MAX_DURATION_SECONDS=0   # 0 = unlimited; force-ends a session past this many seconds regardless of client
 ```
 
-- **Extension-side config:** the backend WS URL (`VITE_BACKEND_WS_URL`) and, when `SESSION_SHARED_SECRETS` is configured on a deployed backend, a matching join code (`VITE_BACKEND_WS_TOKEN`) baked in at build time and sent as `?token=` on the WS connect URL (browsers can't set custom headers on a `WebSocket` handshake, so a query param is the only place it can go). Neither is a *provider* secret in the CLAUDE.md §7 sense (Anthropic/Deepgram/ElevenLabs/Supabase keys) — this is a join code meant to be handed to judges, not a credential that must never leave the server, so shipping it in the extension bundle is an accepted, deliberate exception.
-- **Testing strategy:** a lint/check step (`scripts/check.sh`) greps the built extension bundle for known key prefixes/variable names as a tripwire before considering any release build "done." Feature 17's own auth/capacity/duration behaviour is covered by `backend/tests/test_session_auth_and_limits.py` (handshake rejection with/without a token, capacity cap vs. resume, forced end past the duration cap).
+- **Extension-side config:** the backend WS URL (`VITE_BACKEND_WS_URL`) and, when `SESSION_SHARED_SECRETS` is configured on a deployed backend, a matching join code (`VITE_BACKEND_WS_TOKEN`) baked in at build time and sent as `?token=` on the WS connect URL (browsers can't set custom headers on a `WebSocket` handshake, so a query param is the only place it can go). Neither is a *provider* secret in the CLAUDE.md §7 sense (Anthropic/Deepgram/ElevenLabs keys) — this is a join code meant to be handed to judges, not a credential that must never leave the server, so shipping it in the extension bundle is an accepted, deliberate exception.
+- **Testing strategy:** a lint/check step (`scripts/check.sh`) greps the built extension bundle for known key prefixes/variable names as a tripwire before considering any release build "done." Feature 19's own auth/capacity/duration behaviour is covered by `backend/tests/test_session_auth_and_limits.py` (handshake rejection with/without a token, capacity cap vs. resume, forced end past the duration cap).
 - **Done when:** `.env.example` exists with every variable above documented, and the bundle-grep check passes.
 
 ### V. Error handling

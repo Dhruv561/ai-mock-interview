@@ -1,4 +1,5 @@
 import type { ConnectionState } from "../networking/websocket";
+import { StatusDot } from "./StatusDot";
 
 const LABEL: Record<ConnectionState, string> = {
   connecting: "CONNECTING…",
@@ -21,9 +22,10 @@ const DOT_CLASS: Record<ConnectionState, string> = {
  */
 export function ConnectionBadge({ state }: { state: ConnectionState }) {
   return (
-    <div className="flex items-center gap-2 border-b border-panel-border px-5 py-1.5">
-      <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASS[state]}`} aria-hidden />
-      <span className="font-mono text-[10px] tracking-wider text-ink-faint">{LABEL[state]}</span>
-    </div>
+    <StatusDot
+      label={LABEL[state]}
+      toneClass={DOT_CLASS[state]}
+      className="border-b border-panel-border"
+    />
   );
 }

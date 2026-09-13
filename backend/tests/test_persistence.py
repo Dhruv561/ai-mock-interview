@@ -1,6 +1,6 @@
 from app.config import Settings
 from app.interview.schemas import EvidenceItem, FinalReview, ProblemInfo, ReviewPoint
-from app.persistence import get_repository
+from app.persistence import get_repository, postgres
 from app.persistence.in_memory import InMemoryRepository
 from app.persistence.postgres import PostgresRepository
 
@@ -132,6 +132,37 @@ def test_get_repository_returns_postgres_when_configured():
 def test_postgres_repository_construction_does_not_connect():
     """Smoke test only — no real database is reachable in this
     environment. Construction must be cheap and side-effect free; the pool
-    is created lazily on first use (see postgres.py's docstring)."""
-    repo = PostgresRepository("postgresql://user:pass@localhost/db")
-    assert repo._pool is None
+    is created lazily on first use, and shared at module level across every
+    instance rather than owned per-instance (see postgres.py's docstring —
+    Feature 20 cleanup, so N concurrent sessions share one bounded pool
+    instead of each opening and never closing their own)."""
+    PostgresRepository("postgresql://user:pass@localhost/db")
+    assert postgres._pool is None
+
+
+async def test_postgres_repository_instances_share_one_module_level_pool(monkeypatch):
+    """Mirrors test_in_memory_repository_instances_share_one_module_level_store
+    above: two instances constructed with the same URL (websocket/
+    interview.py constructs a fresh PostgresRepository per session, not one
+    shared instance) must resolve to the exact same pool object rather than
+    each opening their own (Feature 20 cleanup)."""
+    created_dsns = []
+
+    class FakePool:
+        pass
+
+    async def fake_create_pool(dsn, min_size, max_size):
+        created_dsns.append(dsn)
+        return FakePool()
+
+    monkeypatch.setattr(postgres.asyncpg, "create_pool", fake_create_pool)
+    monkeypatch.setattr(postgres, "_pool", None)  # isolate from other tests
+
+    repo_a = PostgresRepository("postgresql://user:pass@localhost/db")
+    repo_b = PostgresRepository("postgresql://user:pass@localhost/db")
+
+    pool_a = await repo_a._get_pool()
+    pool_b = await repo_b._get_pool()
+
+    assert pool_a is pool_b
+    assert len(created_dsns) == 1

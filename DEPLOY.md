@@ -1,7 +1,7 @@
 # DEPLOY.md
 
 How to run the extension against a backend, and how the backend is
-actually deployed for this hackathon. See `FEATURE_PROGRESS.md` Feature 17
+actually deployed for this hackathon. See `FEATURE_PROGRESS.md` Feature 19
 for the implementation record; this file is the operational how-to.
 
 ## 1. Loading the extension (judges/teammates, no Chrome Web Store)
@@ -54,7 +54,7 @@ ceiling to remember to raise for long-lived WebSocket connections.
 - **Production URL:** `http://46.250.244.213:8080` (`/health` for a quick
   check; `/ws/interview` for the extension). No domain/TLS yet — see §4.
 
-### Auth/rate-limit config actually set on this deployment (Feature 17)
+### Auth/rate-limit config actually set on this deployment (Feature 19)
 
 `backend/.env` on the box has:
 ```

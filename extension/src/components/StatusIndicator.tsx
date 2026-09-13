@@ -4,14 +4,12 @@ import { formatElapsed } from "../utils/format";
 const STATUS_LABEL: Record<SessionStatus, string> = {
   idle: "NOT STARTED",
   recording: "RECORDING",
-  paused: "PAUSED",
   ended: "COMPLETE",
 };
 
 const STATUS_DOT_CLASS: Record<SessionStatus, string> = {
   idle: "bg-ink-faint",
   recording: "bg-accent animate-pulse",
-  paused: "bg-ink-faint",
   ended: "bg-accent",
 };
 

@@ -38,6 +38,13 @@ class DeepgramSTTSession:
 
     async def close(self) -> None:
         self._relay_task.cancel()
+        # Await the cancellation rather than firing it and moving on —
+        # _relay_transcripts already handles CancelledError internally, but
+        # without awaiting it here the task's cancellation could still be
+        # pending when the event loop later garbage-collects it, which
+        # surfaces as a spurious "Task was destroyed but it is pending"
+        # warning (Feature 20 cleanup).
+        await asyncio.gather(self._relay_task, return_exceptions=True)
         await self._connection.close()
 
 

@@ -2,18 +2,16 @@
 // catalogue closely enough that translating real server events
 // (networking/websocket.ts) into these same actions is a thin, mechanical
 // step — see state/liveInterviewEngine.ts, which does exactly that.
+//
+// The real interview stage is tracked separately, by
+// networking/useInterviewStage.ts (driven directly off interviewer.state
+// events) and passed to panels via PanelBodyProps.stage — there used to be
+// a second, parallel `InterviewStage` here plus a `stage/set` action and an
+// `InterviewUIState.stage` field, but nothing ever dispatched that action,
+// so it always sat frozen at its initial value (Feature 20 cleanup;
+// removed rather than kept as a second source of truth).
 
-export type InterviewStage =
-  | "intro"
-  | "clarification"
-  | "approach"
-  | "coding"
-  | "complexity"
-  | "testing"
-  | "optimisation"
-  | "review";
-
-export type SessionStatus = "idle" | "recording" | "paused" | "ended";
+export type SessionStatus = "idle" | "recording" | "ended";
 
 export type Speaker = "interviewer" | "candidate";
 
@@ -93,18 +91,22 @@ export interface FinalReview {
 
 export interface InterviewUIState {
   status: SessionStatus;
-  stage: InterviewStage;
   elapsedSeconds: number;
   messages: TranscriptMessage[];
   // The candidate's in-progress utterance, from transcript.partial events —
   // replaced in place as speech continues, not appended to `messages` (see
   // liveInterviewEngine.ts). null when nothing is currently being said.
   candidateDraft: string | null;
-  rubric: RubricState;
   hints: HintEntry[];
   review: FinalReview | null;
 }
 
+// An all-zero RubricState — handy as a starting point/fixture (a live
+// rubric was previously part of InterviewUIState and seeded from this; that
+// field was removed since it was only ever written wholesale by
+// review/ready and never read back before the review screen existed —
+// Review.tsx reads review.rubric instead, see Rubric.tsx's caller). Kept as
+// a named constant since it's still a convenient literal for tests.
 export const INITIAL_RUBRIC: RubricState = {
   clarifying: 0,
   approach: 0,
@@ -116,11 +118,9 @@ export const INITIAL_RUBRIC: RubricState = {
 
 export const INITIAL_STATE: InterviewUIState = {
   status: "idle",
-  stage: "intro",
   elapsedSeconds: 0,
   messages: [],
   candidateDraft: null,
-  rubric: INITIAL_RUBRIC,
   hints: [],
   review: null,
 };

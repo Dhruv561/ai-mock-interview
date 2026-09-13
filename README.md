@@ -6,9 +6,9 @@ LeetCode stays the main workspace. The extension adds a persistent right-side in
 
 ## Project status
 
-**The full MVP pipeline is built.** LeetCode problem/code extraction, the real-time WebSocket transport, mic capture with Deepgram speech-to-text, the backend interview state machine, an AI interviewer (Anthropic Claude, with a deterministic mock fallback), ElevenLabs text-to-speech, static code analysis, tiered hints, an evidence-based live rubric, an evidence-grounded final review, screen/tab recording, and session persistence are all implemented and covered by automated tests against mock providers. Almost every feature is `VERIFIED`; a few are `DONE`. Only Feature 16 (integration hardening and demo readiness) remains.
+**The full MVP pipeline is built, plus a resizable/multi-layout panel and a live backend deployment.** LeetCode problem/code extraction, the real-time WebSocket transport, mic capture with Deepgram speech-to-text, the backend interview state machine, an AI interviewer (Anthropic Claude, with a deterministic mock fallback), ElevenLabs text-to-speech, static code analysis, tiered hints, an evidence-based live rubric, an evidence-grounded final review, screen/tab recording, session persistence, a resizable/preset-switchable interview panel, and Docker/CI backend deployment are all implemented and covered by automated tests against mock providers. 19 features are tracked in total; most are `VERIFIED`, several are `DONE`, and the backend deployment (Feature 19) is live and externally confirmed.
 
-`VERIFIED` is not `DONE`: several features (05, 08, 10, 11, 13, 14, 15) are implemented and tested end-to-end against mock providers, but still need a live pass with real `ANTHROPIC_API_KEY`/`DEEPGRAM_API_KEY`/`ELEVENLABS_API_KEY`/`DATABASE_URL` values before they can be marked `DONE` — that's a credentials/live-verification gap, not missing implementation. See `progress.md` for the current dashboard and `FEATURE_PROGRESS.md` for full per-feature acceptance criteria and status. `DEMO.md` has a step-by-step demo rehearsal script.
+`VERIFIED` is not `DONE`: most features (05, 08-19) are implemented and tested end-to-end against mock providers, but still need either a live pass with real `ANTHROPIC_API_KEY`/`DEEPGRAM_API_KEY`/`ELEVENLABS_API_KEY`/`DATABASE_URL` values, or (Features 17/18) a manual real-browser click-through, before they can be marked `DONE` — that's a credentials/manual-verification gap, not missing implementation. See `progress.md` for the current dashboard and `FEATURE_PROGRESS.md` for full per-feature acceptance criteria and status. `DEMO.md` has a step-by-step demo rehearsal script; `DEPLOY.md` covers the live backend deployment.
 
 ## Documentation map
 
@@ -21,6 +21,7 @@ LeetCode stays the main workspace. The extension adds a persistent right-side in
 | `TODO.md` | Phase-ordered, granular task breakdown |
 | `FEATURE_PROGRESS.md` | Authoritative per-feature checkpoint records |
 | `DEMO.md` | Step-by-step demo rehearsal script |
+| `DEPLOY.md` | Load-unpacked extension steps + the live hosted-backend deployment |
 | `docs/ui-reference.png` | Visual target for the interview panel |
 
 ## Architecture at a glance

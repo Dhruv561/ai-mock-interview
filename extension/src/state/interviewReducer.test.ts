@@ -17,9 +17,9 @@ describe("interviewReducer", () => {
       interviewReducer(recording, { type: "session/tick" }).elapsedSeconds,
     ).toBe(1);
 
-    const paused = { ...INITIAL_STATE, status: "paused" as const };
+    const ended = { ...INITIAL_STATE, status: "ended" as const };
     expect(
-      interviewReducer(paused, { type: "session/tick" }).elapsedSeconds,
+      interviewReducer(ended, { type: "session/tick" }).elapsedSeconds,
     ).toBe(0);
   });
 
@@ -36,22 +36,6 @@ describe("interviewReducer", () => {
     });
     expect(next.messages).toEqual([message]);
     expect(INITIAL_STATE.messages).toHaveLength(0);
-  });
-
-  it("rubric/update clamps to the 0-3 range", () => {
-    const tooHigh = interviewReducer(INITIAL_STATE, {
-      type: "rubric/update",
-      category: "approach",
-      value: 9,
-    });
-    expect(tooHigh.rubric.approach).toBe(3);
-
-    const tooLow = interviewReducer(INITIAL_STATE, {
-      type: "rubric/update",
-      category: "approach",
-      value: -5,
-    });
-    expect(tooLow.rubric.approach).toBe(0);
   });
 
   it("candidateDraft/set replaces the in-progress candidate line", () => {
@@ -92,7 +76,14 @@ describe("interviewReducer", () => {
   it("review/ready stores the evidence-backed review as-is", () => {
     const review: FinalReview = {
       overallScore: 7.8,
-      rubric: INITIAL_STATE.rubric,
+      rubric: {
+        clarifying: 2,
+        approach: 2,
+        code_quality: 1,
+        complexity: 1,
+        communication: 0,
+        testing: 0,
+      },
       strengths: [{ text: "Asked clarifying questions early.", evidenceIds: ["t1"] }],
       areasToImprove: [{ text: "Didn't state complexity unprompted.", evidenceIds: ["t2"] }],
       timeline: [{ label: "Interview ended", elapsedSeconds: 120 }],

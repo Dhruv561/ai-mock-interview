@@ -9,9 +9,10 @@ describe("StatusIndicator", () => {
     expect(screen.getByText("02:05")).toBeInTheDocument();
   });
 
-  it("shows PAUSED while paused", () => {
-    render(<StatusIndicator status="paused" elapsedSeconds={10} />);
-    expect(screen.getByText("PAUSED")).toBeInTheDocument();
+  it("shows COMPLETE with the final elapsed timer once ended", () => {
+    render(<StatusIndicator status="ended" elapsedSeconds={90} />);
+    expect(screen.getByText("COMPLETE")).toBeInTheDocument();
+    expect(screen.getByText("01:30")).toBeInTheDocument();
   });
 
   it("hides the timer before the interview has started", () => {

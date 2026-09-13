@@ -7,10 +7,14 @@ import {
 
 export function Rubric({
   rubric,
-  label = "RUBRIC SO FAR",
+  label,
 }: {
   rubric: RubricState;
-  label?: string;
+  // Required, not defaulted: Rubric only ever had one caller (Review.tsx),
+  // which always passes its own label explicitly — a default here was
+  // leftover from a removed live in-panel rubric feature that no longer
+  // exists (Feature 20 cleanup).
+  label: string;
 }) {
   return (
     <div>

@@ -35,15 +35,17 @@ import uuid
 from collections import deque
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from starlette.websockets import WebSocketState
 
 from app.agents.code_analyser import analyse_code
 from app.agents.evaluator import generate_final_review
 from app.agents.interviewer import propose_interviewer_action
 from app.config import Settings, get_settings
+from app.interview.actions import InterviewerAction
 from app.interview.controller import InterviewController
 from app.interview.prompts import Trigger
 from app.interview.schemas import (
@@ -71,9 +73,11 @@ from app.interview.state import InterviewState, TranscriptEntry
 from app.persistence import get_repository
 from app.persistence.repository import SessionRepository
 from app.providers.llm import get_llm_provider
+from app.providers.llm.base import LLMProvider
 from app.providers.stt import get_stt_provider
 from app.providers.stt.base import STTSession
 from app.providers.tts import get_tts_provider
+from app.providers.tts.base import TTSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +116,25 @@ class SessionRecord:
     # same lifecycle as stt_session — not re-resolved per event, since a
     # real repository may hold a connection pool.
     repository: SessionRepository | None = None
+    # Resolved once at session.start, same lifecycle/reasoning as
+    # stt_session and repository above — a real LLMProvider/TTSProvider
+    # (e.g. AnthropicLLMProvider) owns its own HTTP client/connection pool,
+    # so rebuilding one on every qualifying turn threw that pool away and
+    # paid connection-setup cost on the hot path (Feature 20 cleanup).
+    llm_provider: LLMProvider | None = None
+    tts_provider: TTSProvider | None = None
+    # Guards the check-LLM-call-accept sequence in `_maybe_speak` so two
+    # near-simultaneous triggers (the main receive loop and, with a real
+    # STT provider, its background relay task's on_final callback) can't
+    # both pass `can_speak`'s cooldown/dedup gate before either has written
+    # back (Feature 20 cleanup — see `_maybe_speak`'s docstring).
+    speak_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Set from STT partial/final callbacks (and the dev.simulate_transcript
+    # stand-in) so `_maybe_speak` can enforce architecture.md §L rule 1
+    # ("never speak while the candidate is mid-utterance") — previously
+    # declared as a `can_speak` parameter but never actually set anywhere
+    # (Feature 20 cleanup).
+    is_candidate_speaking: bool = False
 
     def next_seq(self) -> int:
         self.seq += 1
@@ -227,9 +250,53 @@ async def _emit(record: SessionRecord, event: dict) -> None:
             pass  # connection dropped between the state check and the send
 
 
+_EventT = TypeVar("_EventT", bound=BaseModel)
+
+
+async def _emit_new(record: SessionRecord, event_cls: type[_EventT], **fields: object) -> None:
+    """Builds `event_cls(seq=0, **fields)` and emits it. `_emit` always
+    overwrites the placeholder `seq=0` with the session's real next
+    sequence number, so every call site below was otherwise repeating this
+    same "construct with seq=0, model_dump, emit" shape (Feature 20
+    cleanup) — this is just that shape, named once."""
+    event = event_cls(seq=0, **fields)
+    await _emit(record, event.model_dump())
+
+
+async def _transition_to_review(record: SessionRecord, *, now: float = 0.0) -> None:
+    """Transitions into "review" and emits the resulting stage event.
+    Shared by session.end and the forced-time-limit-end path (Feature 20
+    cleanup) — both did this identically, previously duplicated inline and
+    only cross-referenced via docstring ("mirrors SessionEndEvent's
+    cleanup")."""
+    record.state.transition_to("review", now=now)
+    await _emit_new(record, InterviewerStateEvent, stage=record.state.stage)
+
+
 async def _send_error(ws: WebSocket, seq: int, code: str, message: str, recoverable: bool) -> None:
     event = ErrorEvent(seq=seq, code=code, message=message, recoverable=recoverable)
     await ws.send_json(event.model_dump())
+
+
+async def _close_stt_session_on_disconnect(record: SessionRecord | None) -> None:
+    """Closes the session's live STT connection when its WebSocket drops
+    (Feature 20 cleanup — previously nothing closed this on a raw
+    disconnect, leaking one open upstream STT connection per abandoned tab
+    for up to SESSION_GRACE_SECONDS). Only the STT connection is closed
+    here, not the session record itself: the record deliberately survives
+    the grace window so a reconnecting client can `session.resume`
+    (architecture.md §G) — `SessionResumeEvent` below re-opens a fresh STT
+    session in that case, the same way `SessionStartEvent` opens the first
+    one. `record.repository` needs no matching cleanup: it no longer owns
+    a per-session resource once `PostgresRepository` shares one module-
+    level pool (see persistence/postgres.py)."""
+    if record is None or record.stt_session is None:
+        return
+    try:
+        await record.stt_session.close()
+    except Exception:
+        logger.exception("Failed to close STT session during disconnect cleanup")
+    record.stt_session = None
 
 
 async def _speak_audio(record: SessionRecord, settings: Settings, text: str) -> None:
@@ -265,9 +332,8 @@ async def _speak_audio(record: SessionRecord, settings: Settings, text: str) -> 
     """
     started = False
     try:
-        provider = get_tts_provider(settings)
-        start_event = InterviewerAudioStartEvent(seq=0, format="pcm_s16le_16000")
-        await _emit(record, start_event.model_dump())
+        provider = record.tts_provider or get_tts_provider(settings)
+        await _emit_new(record, InterviewerAudioStartEvent, format="pcm_s16le_16000")
         started = True
 
         async for chunk in provider.synthesize(text):
@@ -281,7 +347,7 @@ async def _speak_audio(record: SessionRecord, settings: Settings, text: str) -> 
         logger.exception("TTS synthesis failed; continuing with text-only interviewer response")
     finally:
         if started:
-            await _emit(record, InterviewerAudioEndEvent(seq=0).model_dump())
+            await _emit_new(record, InterviewerAudioEndEvent)
 
 
 def _is_authorized(ws: WebSocket, settings: Settings) -> bool:
@@ -311,9 +377,7 @@ async def _force_end_for_time_limit(ws: WebSocket, record: SessionRecord) -> Non
         await record.stt_session.close()
         record.stt_session = None
     if record.state.stage != "review":
-        record.state.transition_to("review")
-        stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
-        await _emit(record, stage_event.model_dump())
+        await _transition_to_review(record)
     await _send_error(
         ws, 0, "session_time_limit", "Session ended: maximum duration reached.", False
     )
@@ -332,40 +396,65 @@ async def _maybe_speak(
     accepts it, emits whatever event that proposal implies. Silence
     (remain_silent, or any rejected proposal) emits nothing at all — that
     is the intended behaviour (CLAUDE.md: "the interviewer should not
-    speak on every event"), not a missing code path."""
-    now = time.time()
-    if not record.controller.can_speak(now=now, hint_requested=hint_requested):
-        return
+    speak on every event"), not a missing code path.
 
-    provider = get_llm_provider(settings)
-    proposal = await propose_interviewer_action(record.state, provider, trigger=trigger)
-    accepted = record.controller.accept_proposal(proposal, now=now)
-    if accepted is None:
-        return
+    The whole check-LLM-call-accept sequence runs under `record.speak_lock`
+    (Feature 20 cleanup): this is called from more than one trigger source
+    on the same session — the main WS receive loop (code.update, hint
+    requests, dev.simulate_transcript) and, once a real STT provider is
+    wired up, its background relay task's on_final callback — and
+    `can_speak`/`accept_proposal` only read/write `_last_spoke_at` around
+    an `await` to the LLM. Without a lock, two near-simultaneous triggers
+    could both observe the cooldown as open, both await the LLM
+    concurrently, and both get accepted — a double-speak inside what
+    should be one cooldown window. Held for the whole LLM round-trip
+    (and the TTS synthesis after it), not just the check, which is
+    correct here: the interviewer should only ever be "composing" one
+    utterance at a time for a given session."""
+    async with record.speak_lock:
+        now = time.time()
+        if not record.controller.can_speak(
+            now=now,
+            hint_requested=hint_requested,
+            is_candidate_speaking=record.is_candidate_speaking,
+        ):
+            return
 
+        provider = record.llm_provider or get_llm_provider(settings)
+        proposal = await propose_interviewer_action(record.state, provider, trigger=trigger)
+        accepted = record.controller.accept_proposal(proposal, now=now)
+        if accepted is None:
+            return
+
+        await _act_on_accepted_proposal(record, settings, accepted, now=now)
+
+
+async def _act_on_accepted_proposal(
+    record: SessionRecord, settings: Settings, accepted: InterviewerAction, *, now: float
+) -> None:
+    """Emits whatever event(s) an accepted proposal implies. Split out of
+    `_maybe_speak` only so that function's body reads as "gate, then act"
+    without also holding indentation for every action branch under the
+    lock — this is still called from inside `_maybe_speak`'s `speak_lock`."""
     if accepted.action == "ask_question" and accepted.message:
         record.state.recent_interviewer_actions.append(f"asked: {accepted.message}")
         entry = TranscriptEntry(speaker="interviewer", text=accepted.message, timestamp=now)
         record.state.transcript.append(entry)
-        event = InterviewerTranscriptEvent(seq=0, text=accepted.message)
-        await _emit(record, event.model_dump())
+        await _emit_new(record, InterviewerTranscriptEvent, text=accepted.message)
         await _speak_audio(record, settings, accepted.message)
 
     elif accepted.action == "give_hint" and accepted.message:
         level = record.state.hint_level
         record.state.recent_interviewer_actions.append(f"hint (level {level}): {accepted.message}")
-        event = HintResponseEvent(seq=0, level=level, text=accepted.message)
-        await _emit(record, event.model_dump())
+        await _emit_new(record, HintResponseEvent, level=level, text=accepted.message)
         await _speak_audio(record, settings, accepted.message)
 
     elif accepted.action == "transition_stage":
-        stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
-        await _emit(record, stage_event.model_dump())
+        await _emit_new(record, InterviewerStateEvent, stage=record.state.stage)
         if accepted.message:
             entry = TranscriptEntry(speaker="interviewer", text=accepted.message, timestamp=now)
             record.state.transcript.append(entry)
-            transcript_event = InterviewerTranscriptEvent(seq=0, text=accepted.message)
-            await _emit(record, transcript_event.model_dump())
+            await _emit_new(record, InterviewerTranscriptEvent, text=accepted.message)
             await _speak_audio(record, settings, accepted.message)
 
     # Rubric updates ride along with an already-gated, accepted action —
@@ -376,10 +465,12 @@ async def _maybe_speak(
     # the full current rubric, not just the delta — matching
     # RubricUpdatedEvent's schema shape.
     if accepted.action in _RUBRIC_CARRYING_ACTIONS and accepted.rubric_updates:
-        rubric_event = RubricUpdatedEvent(
-            seq=0, rubric=record.state.rubric, evidence=accepted.rubric_evidence or ""
+        await _emit_new(
+            record,
+            RubricUpdatedEvent,
+            rubric=record.state.rubric,
+            evidence=accepted.rubric_evidence or "",
         )
-        await _emit(record, rubric_event.model_dump())
 
 
 async def _generate_and_emit_review(record: SessionRecord, settings: Settings) -> None:
@@ -401,7 +492,7 @@ async def _generate_and_emit_review(record: SessionRecord, settings: Settings) -
     CLAUDE.md STOP-safety), so this logs and notifies rather than raising
     out of the WS handler."""
     try:
-        provider = get_llm_provider(settings)
+        provider = record.llm_provider or get_llm_provider(settings)
         final_review = await generate_final_review(record.state, provider)
     except Exception:
         # Broad on purpose (same as the STT-send failure handler above):
@@ -409,13 +500,13 @@ async def _generate_and_emit_review(record: SessionRecord, settings: Settings) -
         # any provider-transport failure must both degrade the same way —
         # the interview session must survive either.
         logger.exception("Final review generation failed; interview still ends")
-        error_event = ErrorEvent(
-            seq=0,
+        await _emit_new(
+            record,
+            ErrorEvent,
             code="review_generation_failed",
             message="Could not generate the final review for this session.",
             recoverable=True,
         )
-        await _emit(record, error_event.model_dump())
         return
 
     if record.repository is not None:
@@ -424,31 +515,38 @@ async def _generate_and_emit_review(record: SessionRecord, settings: Settings) -
             "save_final_review",
         )
 
-    review_event = ReviewReadyEvent(seq=0, review=final_review)
-    await _emit(record, review_event.model_dump())
+    await _emit_new(record, ReviewReadyEvent, review=final_review)
 
 
 def _make_transcript_callbacks(session_id: str, settings: Settings):
     """STT provider callbacks close over a session_id, not a SessionRecord
     or WebSocket, so they keep working correctly even if the session has
-    since been resumed on a different connection (or none at all)."""
+    since been resumed on a different connection (or none at all).
+
+    Also the single place `record.is_candidate_speaking` is maintained for
+    a real (non-mock) STT provider (architecture.md §L rule 1 — Feature 20
+    cleanup, this flag previously had no writer anywhere): a partial
+    result means the candidate is still mid-utterance, a final result
+    means it just ended. `dev.simulate_transcript` (websocket/interview.py,
+    mock-mode only) mirrors this same set/clear around its own synthetic
+    partial+final pair for the same reason."""
 
     async def on_partial(text: str) -> None:
         record = sessions.get(session_id)
         if record is None:
             return
-        event = TranscriptPartialEvent(seq=0, text=text)
-        await _emit(record, event.model_dump())
+        record.is_candidate_speaking = True
+        await _emit_new(record, TranscriptPartialEvent, text=text)
 
     async def on_final(text: str) -> None:
         record = sessions.get(session_id)
         if record is None:
             return
+        record.is_candidate_speaking = False
         timestamp = time.time()
         entry = TranscriptEntry(speaker="candidate", text=text, timestamp=timestamp)
         record.state.transcript.append(entry)
-        event = TranscriptFinalEvent(seq=0, text=text, timestamp=timestamp)
-        await _emit(record, event.model_dump())
+        await _emit_new(record, TranscriptFinalEvent, text=text, timestamp=timestamp)
         await _maybe_speak(record, settings, trigger="transcript_final")
 
     return on_partial, on_final
@@ -474,6 +572,7 @@ async def interview_socket(ws: WebSocket) -> None:
             message = await ws.receive()
 
             if message["type"] == "websocket.disconnect":
+                await _close_stt_session_on_disconnect(record)
                 return
 
             if record is not None and _duration_exceeded(record, settings):
@@ -547,6 +646,28 @@ async def interview_socket(ws: WebSocket) -> None:
                 )
                 record.active_ws = ws
                 record.repository = get_repository(settings)
+                # LLM/TTS providers, like the repository and STT session
+                # above, are resolved once per session rather than fresh on
+                # every call (Feature 20 cleanup) — a real provider (e.g.
+                # AnthropicLLMProvider) owns its own HTTP client/connection
+                # pool, so rebuilding one on every qualifying turn threw
+                # that pool away and paid connection-setup cost on the hot
+                # path for no benefit (both providers are cheap, stateless
+                # wrappers otherwise — safe to share across the session).
+                # Construction failures degrade the same way a per-call
+                # factory failure already did (caught inside _speak_audio/
+                # _maybe_speak, which fall back to calling the factory again
+                # when nothing is cached) rather than aborting session.start.
+                try:
+                    record.llm_provider = get_llm_provider(settings)
+                except Exception:
+                    logger.exception("LLM provider construction failed at session.start")
+                    record.llm_provider = None
+                try:
+                    record.tts_provider = get_tts_provider(settings)
+                except Exception:
+                    logger.exception("TTS provider construction failed at session.start")
+                    record.tts_provider = None
                 _persist(
                     record.repository.create_session(
                         record.session_id,
@@ -565,10 +686,8 @@ async def interview_socket(ws: WebSocket) -> None:
                     # STT connection failure must degrade gracefully, not
                     # kill the interview session (architecture.md §H risk).
                     record.stt_session = None
-                started = SessionStartedEvent(seq=0, session_id=record.session_id)
-                await _emit(record, started.model_dump())
-                stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
-                await _emit(record, stage_event.model_dump())
+                await _emit_new(record, SessionStartedEvent, session_id=record.session_id)
+                await _emit_new(record, InterviewerStateEvent, stage=record.state.stage)
                 continue
 
             if isinstance(client_event, SessionResumeEvent):
@@ -580,6 +699,24 @@ async def interview_socket(ws: WebSocket) -> None:
                 record = found
                 record.active_ws = ws
                 record.last_seen = time.monotonic()
+                if record.stt_session is None:
+                    # The previous connection's STT session was closed on
+                    # disconnect (_close_stt_session_on_disconnect,
+                    # Feature 20 cleanup) — re-open one the same way
+                    # session.start does, so a resumed session keeps
+                    # transcribing rather than silently losing STT for the
+                    # rest of the interview. Callbacks close over
+                    # session_id (not this ws), so they keep working
+                    # correctly regardless of which connection is live.
+                    on_partial, on_final = _make_transcript_callbacks(
+                        record.session_id, settings
+                    )
+                    try:
+                        record.stt_session = await get_stt_provider(settings).start_session(
+                            on_partial, on_final
+                        )
+                    except Exception:
+                        record.stt_session = None
                 for buffered in record.events:
                     if buffered["seq"] > client_event.last_seq:
                         await ws.send_json(buffered)
@@ -595,15 +732,21 @@ async def interview_socket(ws: WebSocket) -> None:
                     message_text = "dev.simulate_transcript is mock-mode only."
                     await _send_error(ws, 0, "mock_only", message_text, True)
                     continue
-                partial = TranscriptPartialEvent(seq=0, text=client_event.text)
-                await _emit(record, partial.model_dump())
+                # Mirrors _make_transcript_callbacks' on_partial/on_final
+                # set/clear of is_candidate_speaking, so this mock-mode
+                # stand-in exercises the same §L rule 1 gating a real STT
+                # provider's callbacks would (Feature 20 cleanup).
+                record.is_candidate_speaking = True
+                await _emit_new(record, TranscriptPartialEvent, text=client_event.text)
                 timestamp = time.time()
                 text = client_event.text
                 record.state.transcript.append(
                     TranscriptEntry(speaker="candidate", text=text, timestamp=timestamp)
                 )
-                final = TranscriptFinalEvent(seq=0, text=client_event.text, timestamp=timestamp)
-                await _emit(record, final.model_dump())
+                record.is_candidate_speaking = False
+                await _emit_new(
+                    record, TranscriptFinalEvent, text=client_event.text, timestamp=timestamp
+                )
                 await _maybe_speak(record, settings, trigger="transcript_final")
                 continue
 
@@ -653,10 +796,7 @@ async def interview_socket(ws: WebSocket) -> None:
                 # so the final review is generated and emitted at most once
                 # per session, not regenerated on every extra session.end.
                 if record.state.stage != "review":
-                    now = time.time()
-                    record.state.transition_to("review", now=now)
-                    stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
-                    await _emit(record, stage_event.model_dump())
+                    await _transition_to_review(record, now=time.time())
                     await _generate_and_emit_review(record, settings)
                 record.last_seen = time.monotonic()
                 continue
@@ -667,4 +807,5 @@ async def interview_socket(ws: WebSocket) -> None:
             record.last_seen = time.monotonic()
 
     except WebSocketDisconnect:
+        await _close_stt_session_on_disconnect(record)
         return

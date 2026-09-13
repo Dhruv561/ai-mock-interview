@@ -99,7 +99,7 @@ export function ConvaiInterviewPanel() {
     }
   }
 
-  const isActive = state.status === "recording" || state.status === "paused";
+  const isActive = state.status === "recording";
 
   const panelBodyProps: PanelBodyProps = {
     state,

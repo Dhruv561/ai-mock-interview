@@ -7,6 +7,8 @@ import { watchCode } from "./editor";
 import { cacheProblemInfo, hasActiveInterviewSession, resetInterviewSession } from "./interviewSession";
 import { stopAllMicrophoneCapture } from "../media/microphone";
 import { stopAllConvaiMicrophoneCapture } from "../media/convaiMicrophone";
+import { stopAllScreenCapture } from "../media/screen";
+import { stopAllInterviewerAudioPlayback } from "../media/interviewerAudioPlayer";
 import { releasePageSpace, reservePageSpace } from "./layout";
 import { isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
 
@@ -57,7 +59,7 @@ function mount() {
 
   stopWatchingCode = watchCode((snapshot) => {
     // Both checked, not else-if: the two pipelines are mutually exclusive in
-    // practice (App.tsx mounts one or the other per VITE_USE_ELEVENLABS_CONVAI),
+    // practice (App.tsx mounts one or the other per VITE_USE_LEGACY_PIPELINE),
     // but this keeps that assumption from silently breaking either one.
     const real = hasActiveInterviewSession();
     const convai = hasActiveConvaiSession();
@@ -96,12 +98,15 @@ function unmount() {
   stopWatchingCode = null;
 
   // Belt and braces: even if a future change loses the React cleanup path,
-  // teardown must never leave the mic live. Cheap and idempotent. Both
-  // pipelines' kill switches are called unconditionally, same reasoning as
-  // watchCode's dual check above — whichever one is actually live gets torn
-  // down, and calling the other one is a no-op.
+  // teardown must never leave the mic (either pipeline's), screen capture,
+  // or interviewer TTS audio context live. Cheap and idempotent — whichever
+  // pipeline is actually active gets torn down, and calling the others is a
+  // no-op (Feature 20 cleanup added the screen/audio-player calls; the
+  // Convai default-pipeline work added the second mic kill switch).
   stopAllMicrophoneCapture();
   stopAllConvaiMicrophoneCapture();
+  stopAllScreenCapture();
+  stopAllInterviewerAudioPlayback();
 }
 
 mount();

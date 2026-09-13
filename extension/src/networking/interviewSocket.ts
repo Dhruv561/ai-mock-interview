@@ -16,7 +16,7 @@ const DEFAULT_BACKEND_WS_URL = "ws://127.0.0.1:8000/ws/interview";
 
 let singleton: InterviewSocket | null = null;
 
-// Judges-only auth (Feature 17): when the deployed backend has
+// Judges-only auth (Feature 19): when the deployed backend has
 // SESSION_SHARED_SECRETS configured, it rejects the WS handshake unless a
 // matching `?token=` query param is present. Baked in at build time via
 // VITE_BACKEND_WS_TOKEN so a demo build can carry its own code without a

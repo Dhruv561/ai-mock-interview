@@ -1,4 +1,5 @@
 import type { ScreenStatus } from "../media/useScreenCapture";
+import { StatusDot } from "./StatusDot";
 
 const LABEL: Record<ScreenStatus, string> = {
   idle: "SCREEN OFF",
@@ -23,10 +24,5 @@ const DOT_CLASS: Record<ScreenStatus, string> = {
  * CLAUDE.md §9).
  */
 export function ScreenBadge({ status }: { status: ScreenStatus }) {
-  return (
-    <div className="flex items-center gap-2 px-5 py-1.5">
-      <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASS[status]}`} aria-hidden />
-      <span className="font-mono text-[10px] tracking-wider text-ink-faint">{LABEL[status]}</span>
-    </div>
-  );
+  return <StatusDot label={LABEL[status]} toneClass={DOT_CLASS[status]} />;
 }

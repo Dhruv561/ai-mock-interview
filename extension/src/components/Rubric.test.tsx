@@ -6,7 +6,10 @@ import { Rubric } from "./Rubric";
 describe("Rubric", () => {
   it("renders every rubric category with its current score", () => {
     render(
-      <Rubric rubric={{ ...INITIAL_RUBRIC, clarifying: 3, approach: 2 }} />,
+      <Rubric
+        rubric={{ ...INITIAL_RUBRIC, clarifying: 3, approach: 2 }}
+        label="RUBRIC BREAKDOWN"
+      />,
     );
     expect(screen.getByText("Clarifying")).toBeInTheDocument();
     expect(screen.getByText("3/3")).toBeInTheDocument();
