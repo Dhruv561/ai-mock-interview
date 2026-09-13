@@ -1,13 +1,16 @@
 """WebSocket session transport (Feature 06 — architecture.md §G), the STT
 audio relay (Feature 05 — architecture.md §E/§H), the interview state
-machine wiring (Feature 07 — architecture.md §I), and the AI interviewer
-+ controller (Feature 08 — architecture.md §J/§L).
+machine wiring (Feature 07 — architecture.md §I), the AI interviewer
++ controller (Feature 08 — architecture.md §J/§L), and session persistence
+(Feature 15 — architecture.md §Q).
 
 Owns connection lifecycle, event validation, the resume/replay protocol,
 forwarding binary mic-audio frames to a per-session STT provider, keeping
-each session's InterviewState up to date as events arrive, and — via
+each session's InterviewState up to date as events arrive, — via
 _maybe_speak — asking the interviewer agent for a proposed action and
-having the controller decide whether to actually execute it.
+having the controller decide whether to actually execute it, and (via
+`_persist`) writing session lifecycle/events/final review to a
+SessionRepository in the background.
 screen.recording.*/session.pause are validated and keep the session alive
 but don't yet drive any behaviour (Features 08's controller only reacts to
 code/transcript/hint events right now; recording state is Feature 12).
@@ -15,11 +18,13 @@ code/transcript/hint events right now; recording state is Feature 12).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
 from collections import deque
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -54,6 +59,8 @@ from app.interview.schemas import (
     TranscriptPartialEvent,
 )
 from app.interview.state import InterviewState, TranscriptEntry
+from app.persistence import get_repository
+from app.persistence.repository import SessionRepository
 from app.providers.llm import get_llm_provider
 from app.providers.stt import get_stt_provider
 from app.providers.stt.base import STTSession
@@ -91,6 +98,10 @@ class SessionRecord:
     # than a stale one captured by closure at session-start time.
     active_ws: WebSocket | None = None
     stt_session: STTSession | None = None
+    # Resolved once at session.start (Feature 15 / architecture.md §Q),
+    # same lifecycle as stt_session — not re-resolved per event, since a
+    # real repository may hold a connection pool.
+    repository: SessionRepository | None = None
 
     def next_seq(self) -> int:
         self.seq += 1
@@ -125,6 +136,44 @@ class SessionRegistry:
 
 sessions = SessionRegistry()
 
+# Fire-and-forget persistence tasks (see `_persist`) must be kept alive
+# somewhere — asyncio only holds a weak reference to a task created via
+# `create_task`, so a task with nothing else referencing it can be
+# garbage-collected mid-flight. This module-level set is that "somewhere",
+# with each task removing itself once done.
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _run_persistence(coro: Coroutine[None, None, None], description: str) -> None:
+    try:
+        await coro
+    except Exception:
+        # Persistence must never break a live interview (Feature 15 design
+        # decision — see `_persist`'s docstring). Same swallow-and-log
+        # posture as _speak_audio's TTS failure handling below.
+        logger.exception("Persistence write failed (%s); interview continues", description)
+
+
+def _persist(coro: Coroutine[None, None, None], description: str) -> None:
+    """Fire-and-forget a persistence write.
+
+    Design decision (Feature 15): persistence writes run as a background
+    task rather than being awaited inline. `_emit` is the hot path every
+    single interviewer/candidate event passes through, and CLAUDE.md
+    principle 4 / this file's own latency discipline (see _speak_audio's
+    docstring, and the STT-failure handling in the binary-frame branch)
+    already treats "external I/O must never block or add latency to the
+    live interview" as a hard rule for TTS and STT. A database write
+    (especially a real Postgres round-trip) is exactly that kind of
+    external I/O, so it gets the same treatment: scheduled, not awaited,
+    with failures logged and swallowed rather than raised — a lost write
+    must degrade to "this session has a gap in its persisted history", not
+    to a dropped WebSocket message or a delayed interviewer response.
+    """
+    task = asyncio.create_task(_run_persistence(coro, description))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 async def _emit(record: SessionRecord, event: dict) -> None:
     """Stamps + buffers an event for a session, and sends it live if a
@@ -134,6 +183,14 @@ async def _emit(record: SessionRecord, event: dict) -> None:
     stamped = {**event, "seq": record.next_seq()}
     record.events.append(stamped)
     record.last_seen = time.monotonic()
+
+    if record.repository is not None:
+        # Every event a session ever emits (transcript, code-triggered
+        # reactions, hints, rubric updates, stage transitions, review.ready)
+        # already funnels through this one chokepoint — persisting here
+        # keeps persistence orthogonal to business logic instead of
+        # scattering append_event calls across every branch that emits.
+        _persist(record.repository.append_event(record.session_id, stamped), "append_event")
 
     ws = record.active_ws
     if ws is not None and ws.client_state == WebSocketState.CONNECTED:
@@ -297,6 +354,12 @@ async def _generate_and_emit_review(record: SessionRecord, settings: Settings) -
         await _emit(record, error_event.model_dump())
         return
 
+    if record.repository is not None:
+        _persist(
+            record.repository.save_final_review(record.session_id, final_review),
+            "save_final_review",
+        )
+
     review_event = ReviewReadyEvent(seq=0, review=final_review)
     await _emit(record, review_event.model_dump())
 
@@ -400,6 +463,16 @@ async def interview_socket(ws: WebSocket) -> None:
                     client_event.problem, client_event.language, started_at=time.time()
                 )
                 record.active_ws = ws
+                record.repository = get_repository(settings)
+                _persist(
+                    record.repository.create_session(
+                        record.session_id,
+                        client_event.problem,
+                        client_event.language,
+                        record.state.started_at,
+                    ),
+                    "create_session",
+                )
                 on_partial, on_final = _make_transcript_callbacks(record.session_id, settings)
                 try:
                     record.stt_session = await get_stt_provider(settings).start_session(

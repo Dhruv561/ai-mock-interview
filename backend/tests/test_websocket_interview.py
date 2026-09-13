@@ -299,6 +299,46 @@ def test_session_end_transitions_to_review_and_is_idempotent():
     assert record.state.stage == "review"
 
 
+def test_persistence_repository_is_called_across_session_lifecycle(monkeypatch):
+    """Feature 15 / architecture.md §Q: `_emit`'s single chokepoint calls
+    `append_event` for every event a session emits, session.start calls
+    `create_session` once, and a successfully generated review calls
+    `save_final_review` once — all fire-and-forget (see `_persist`), which
+    this asserts on indirectly by checking call counts after the socket
+    closes rather than by awaiting the writes directly."""
+    calls = {"create_session": 0, "append_event": 0, "save_final_review": 0}
+
+    class FakeRepository:
+        async def create_session(self, session_id, problem, language, started_at):
+            calls["create_session"] += 1
+
+        async def append_event(self, session_id, event):
+            calls["append_event"] += 1
+
+        async def save_final_review(self, session_id, review):
+            calls["save_final_review"] += 1
+
+        async def get_session(self, session_id):
+            return None
+
+    monkeypatch.setattr(ws_module, "get_repository", lambda settings: FakeRepository())
+
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        ws.receive_json()  # session.started
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json({"type": "session.end"})
+        ws.receive_json()  # interviewer.state (review)
+        ws.receive_json()  # review.ready
+
+    assert calls["create_session"] == 1
+    # session.started, interviewer.state (intro), interviewer.state
+    # (review), review.ready — four events emitted across this flow.
+    assert calls["append_event"] == 4
+    assert calls["save_final_review"] == 1
+
+
 def test_code_update_triggers_the_mock_interviewer_at_intro_stage():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
