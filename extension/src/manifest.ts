@@ -37,7 +37,9 @@ export default defineManifest({
       run_at: "document_start",
     },
   ],
-  permissions: ["scripting", "storage"],
+  // "alarms" backs the service-worker keepalive in background/index.ts —
+  // see that file for why it's needed.
+  permissions: ["scripting", "storage", "alarms"],
   // The local backend must be declared here, not just leetcode.com.
   // leetcode.com serves `default-src 'none'; connect-src 'self'
   // https://challenges.cloudflare.com`, which blocks any connection to

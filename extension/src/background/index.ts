@@ -25,8 +25,36 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[ai-mock-interview] installed");
 });
 
+// Keepalive (2026-09-13 live-demo fix): an MV3 service worker is evicted
+// after ~30s with no *extension-API* activity — an open WebSocket does not
+// count, so without this the worker (and the WS it owns) was observed being
+// killed and respawned roughly every 5-10s during a real interview, forcing
+// networking/websocket.ts's client to reconnect over and over. Confirmed
+// live via chrome://inspect: the service worker's own devtools target id
+// changed mid-session. Each reconnect drops the STT provider mid-utterance
+// (a fresh Deepgram session gets headerless WebM and can't decode cleanly)
+// and can orphan an in-flight TTS audio bracket — this, not provider
+// latency, was the root cause of garbled transcripts and missing interviewer
+// audio in that test.
+//
+// chrome.alarms firing is a genuine extension-API event, so it resets the
+// idle timer just like any other; Chrome enforces a 30s floor on
+// periodInMinutes, which is why this only reduces (not eliminates) the eviction
+// window rather than closing it outright. Scoped to the lifetime of the
+// interview port rather than left running always, since it only needs to
+// hold the worker up while a session actually depends on it.
+const KEEPALIVE_ALARM_NAME = "ai-mock-interview-keepalive";
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  // Intentionally empty: being called at all is what resets the eviction
+  // timer. Nothing else needs to happen here.
+  void alarm;
+});
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== INTERVIEW_PORT_NAME) return;
+
+  chrome.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: 0.5 });
 
   let ws: WebSocket | null = null;
 
@@ -82,6 +110,7 @@ chrome.runtime.onConnect.addListener((port) => {
   // Tab closed, navigated, or the content script was torn down — don't leave
   // an orphaned socket (and an orphaned backend session) behind.
   port.onDisconnect.addListener(() => {
+    chrome.alarms.clear(KEEPALIVE_ALARM_NAME);
     ws?.close();
     ws = null;
   });
