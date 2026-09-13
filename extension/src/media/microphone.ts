@@ -9,9 +9,16 @@
 
 const CHUNK_INTERVAL_MS = 250;
 const PREFERRED_MIME_TYPES = ["audio/webm;codecs=opus", "audio/webm"];
+const ANALYSER_FFT_SIZE = 64;
 
 export interface MicrophoneCapture {
   stop(): void;
+  // Live level-meter tap on the raw mic stream (the AudioLevelMeter "we're
+  // recording" bars) — null in any environment without Web Audio (jsdom in
+  // tests, or a browser missing it), which the level meter treats as "show
+  // nothing" rather than an error. Deliberately not wired to any
+  // destination: it only reads from the stream, never plays it back.
+  analyser: AnalyserNode | null;
 }
 
 // Module-level registry of the one capture allowed to exist at a time.
@@ -109,16 +116,44 @@ export function startMicrophoneCapture(
   };
   recorder.start(CHUNK_INTERVAL_MS);
 
+  const { analyser, close: closeAnalyser } = createLevelAnalyser(stream);
+
   const capture: MicrophoneCapture = {
+    analyser,
     stop() {
       if (stopped) return; // idempotent
       stopped = true;
       recorder.stop();
       for (const track of stream.getTracks()) track.stop();
+      closeAnalyser();
       if (activeCapture === capture) activeCapture = null;
     },
   };
 
   activeCapture = capture;
   return capture;
+}
+
+/**
+ * Best-effort AnalyserNode tap on a mic stream, for the level meter only.
+ * Never throws: jsdom (tests) and any browser without Web Audio simply get
+ * no analyser, same "degrade gracefully rather than break the interview"
+ * stance as requestMicrophoneStream's permission handling.
+ */
+function createLevelAnalyser(stream: MediaStream): {
+  analyser: AnalyserNode | null;
+  close: () => void;
+} {
+  try {
+    const context = new AudioContext();
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = ANALYSER_FFT_SIZE;
+    source.connect(analyser); // tap only — never connected onward to
+    // context.destination, so this must not (and does not) cause the
+    // candidate to hear their own mic played back.
+    return { analyser, close: () => void context.close() };
+  } catch {
+    return { analyser: null, close: () => {} };
+  }
 }

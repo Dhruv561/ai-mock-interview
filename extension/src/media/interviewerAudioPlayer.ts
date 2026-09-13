@@ -36,12 +36,25 @@ export interface AudioBufferSourceNodeLike extends AudioNodeLike {
   stop(when?: number): void;
 }
 
+// Structural subset of AnalyserNode — mirrors media/audioLevels.ts's
+// AnalyserLike (kept as a separate declaration so this module doesn't
+// depend on media/ for its public types, same reasoning as the other
+// *Like interfaces here).
+export interface AnalyserNodeLike extends AudioNodeLike {
+  readonly frequencyBinCount: number;
+  getByteFrequencyData(array: Uint8Array): void;
+}
+
 export interface AudioContextLike {
   readonly currentTime: number;
   readonly destination: AudioNodeLike;
   createGain(): GainNodeLike;
   createBufferSource(): AudioBufferSourceNodeLike;
   createBuffer(numberOfChannels: number, length: number, sampleRate: number): AudioBufferLike;
+  // Optional: existing fakes in interviewerAudioPlayer.test.ts predate the
+  // level meter and don't implement this, so the analyser is skipped
+  // (getAnalyser() stays null) wherever it's absent rather than required.
+  createAnalyser?(): AnalyserNodeLike;
 }
 
 export type AudioContextFactory = () => AudioContextLike;
@@ -55,6 +68,11 @@ export interface InterviewerAudioPlayer {
   handleEnd(): void;
   setMuted(muted: boolean): void;
   isMuted(): boolean;
+  // Level-meter tap on the (post-gain, so muting silences the meter too)
+  // playback graph. null until the first utterance creates the audio
+  // context, and permanently null if the environment/fakes have no
+  // createAnalyser.
+  getAnalyser(): AnalyserNodeLike | null;
 }
 
 export interface InterviewerAudioPlayerOptions {
@@ -81,6 +99,7 @@ export function createInterviewerAudioPlayer(
 
   let audioContext: AudioContextLike | null = null;
   let gainNode: GainNodeLike | null = null;
+  let analyserNode: AnalyserNodeLike | null = null;
   let muted = false;
   let nextStartTime = 0;
   const activeSources = new Set<AudioBufferSourceNodeLike>();
@@ -94,6 +113,10 @@ export function createInterviewerAudioPlayer(
       gainNode = audioContext.createGain();
       gainNode.gain.value = muted ? 0 : 1;
       gainNode.connect(audioContext.destination);
+      // Best-effort: only environments/fakes that implement createAnalyser
+      // get a level meter (see AudioContextLike's doc comment).
+      analyserNode = audioContext.createAnalyser?.() ?? null;
+      if (analyserNode) gainNode.connect(analyserNode);
     }
     return { ctx: audioContext, gain: gainNode };
   }
@@ -182,6 +205,10 @@ export function createInterviewerAudioPlayer(
 
     isMuted() {
       return muted;
+    },
+
+    getAnalyser() {
+      return analyserNode;
     },
   };
 }

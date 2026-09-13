@@ -797,3 +797,62 @@ P0
 
 ## Next action
 Run the full vertical slice and fix blockers.
+
+---
+
+# Feature 17 — Panel layout presets, live candidate transcript, audio level meters
+
+## Status
+IMPLEMENTED (not VERIFIED — see Verification)
+
+## Priority
+P1
+
+## started_at
+2026-09-13
+
+## Current task
+Complete. Next session's job (if picked up) is the manual browser/mic verification this environment can't perform (see Verification).
+
+## Acceptance criteria
+- [x] the "Interview Sidebar" Claude Design canvas (claude.ai/design/p/b022e938-74e5-4cb1-8c48-38830dba80cd, `Interview Sidebar.dc.html`) is imported and its three panel-posture directions are each implemented and selectable live
+- [x] the candidate's own speech renders in real time as they say it (transcript.partial), not only once finished
+- [x] a real (not decorative) audio level meter shows for both the candidate's mic input and the interviewer's TTS playback
+- [x] none of the three presets silently reintroduces the already-decided-against live rubric, or fabricates data (a stage-integrity indicator, per-phase timestamps) with no backing signal
+- [ ] verified against a real LeetCode page with a real mic and a real (or mock) backend connection — not done in this environment
+
+## Completed
+Three selectable panel-layout presets (`state/panelLayout.ts`, default `docked`), each rendering the same real state/handlers (`components/panels/PanelBodyProps.ts`) arranged per one direction of the imported design:
+- `components/panels/DockedPanel.tsx` (design ref 1a) — full presence: interviewer avatar + live TTS level meter, current question as a large "Last said" line, the candidate's live draft with its own mic level meter, and a real (evidence-based, no fabricated per-phase times) stage list (`components/panels/PhaseList.tsx`).
+- `components/panels/FloatingPanel.tsx` (1b) — minimal posture: the current exchange as chat bubbles over one control pill (clock/stage/level-meter/mute/hint/end). Kept inside the panel's existing reserved 420px column rather than adding a second, page-width overlay/reflow mode (architecture.md's "one page-space model" note below).
+- `components/panels/SplitPanel.tsx` (1c) — the pre-existing transcript+badges posture, now with a live candidate draft and per-badge level meters; closest to what was already built.
+- `components/LayoutSwitcher.tsx` — a 3-way toggle in the panel header so the candidate can compare all three live, same session (not persisted — a comparison tool, not a setting).
+
+Live candidate transcript: `transcript.partial` (previously dropped — see the old comment this replaced in `state/liveInterviewEngine.ts`) now sets `state.candidateDraft`, a single slot each partial replaces in place; `transcript.final`/`message/add` clears it (`state/interviewReducer.ts`). `components/Transcript.tsx` renders it as a live, dimmed/italic line with a blinking cursor, below history, in both its light (`SplitPanel`) and dark (`DockedPanel`) tones.
+
+Audio level meters ("spectrogram"): `media/audioLevels.ts` (pure bucket-averaging math, unit-tested), `media/useAudioLevels.ts` (rAF polling hook), `components/AudioLevelMeter.tsx` (presentational bars). Fed by two real taps, not a fake CSS loop: `media/microphone.ts` now creates a passive `AnalyserNode` on the mic stream (never connected to `destination` — it must not, and does not, play the mic back to the candidate) exposed through `useMicrophoneCapture`'s `getAnalyser`; `media/interviewerAudioPlayer.ts` taps its existing gain node into an optional analyser (guarded — `AudioContextLike.createAnalyser` is optional so the pre-existing test fakes didn't need updating) exposed through `useInterviewerAudioPlayback`'s `getAnalyser`.
+
+Visual tokens: `styles/globals.css` gained a dark-panel palette (`--color-dark-*`, `--color-accent-on-dark`) for the docked/floating presets' near-black surface, and a one-shot `message-pop` entrance animation applied to newly-appended transcript lines (not replayed on the draft's in-place text updates, since the DOM node doesn't remount).
+
+Deliberately not carried over from the design reference (documented here per CLAUDE.md's "don't silently change requirements" rule):
+- The live "Rubric so far" section (1c) — showing rubric during the interview rather than only on Review is a standing, deliberate product decision (this file's Feature 13 entry, `InterviewPanel.tsx`'s existing comment, `architecture.md` §1, `progress.md`'s decisions log). A design exploration doesn't override it on its own.
+- The "Clean session" integrity block (1a) — no screen/tab-recording signal exists yet (Feature 12 is still PLANNED); showing it now would be fabricated, non-evidence-based UI (CLAUDE.md §10).
+- Per-phase elapsed times in the stage list (1a) — `useInterviewStage` only reports the *current* stage, not per-stage entry timestamps; `PhaseList.tsx` shows real progress (behind/current/ahead) without inventing a time column.
+- A literal "Hold to talk" push-to-talk button (1a) — mic capture runs continuously from session start, not per-press; that label would misrepresent what the button does.
+- Google Fonts (Space Grotesk/Geist Mono) — loading them into a content-script shadow DOM would need new host permissions/CSP surface (CLAUDE.md's browser-extension caution) for a cosmetic gain; the existing system-font stack was kept.
+- The design's full-viewport-width floating bar (1b) — kept inside the already-established reserved-column page-space model (`content/layout.ts`) instead of adding a second layout mode, per CLAUDE.md's "keep the architecture simple".
+
+## Files changed
+`extension/src/state/{types,interviewReducer,interviewReducer.test,liveInterviewEngine,liveInterviewEngine.test,panelLayout}.ts`; `extension/src/media/{microphone,useMicrophoneCapture,useMicrophoneCapture.test,interviewerAudioPlayer,useInterviewerAudioPlayback,useInterviewerAudioPlayback.test,audioLevels,audioLevels.test,useAudioLevels}.ts`; `extension/src/components/{InterviewPanel,Transcript,Transcript.test,LayoutSwitcher,AudioLevelMeter,stageInfo,StageBadge}.tsx`; `extension/src/components/panels/{PanelBodyProps,DockedPanel,FloatingPanel,SplitPanel,PhaseList}.tsx`; `extension/src/styles/globals.css`.
+
+## Tests/checks run
+`npm run lint` (extension) — clean except one pre-existing, unrelated `react-refresh/only-export-components` warning in `state/interviewStore.tsx`. `npx tsc --noEmit` — clean. `npx vitest run` — 99/99 passing (up from 85, all new/changed behaviour covered: `audioLevels.test.ts`, `Transcript.test.tsx`, the updated `interviewReducer.test.ts`/`liveInterviewEngine.test.ts`, and the pre-existing mic/TTS-player tests updated only for the new optional fields). `npm run build` — succeeds; confirmed the new dark-panel/level-meter/pop-animation Tailwind utilities actually compiled into the bundle's CSS (not just present as class-name strings).
+
+## Verification
+No manual browser verification performed — this environment has no real LeetCode page, microphone, or (necessarily) a running backend to click through. What's specifically unverified: the three layouts actually look right at 420px width against a real LeetCode page; the mic level meter visibly reacts to real speech; the TTS level meter visibly reacts to real ElevenLabs (or mock) playback; the candidate draft line visibly updates smoothly as real `transcript.partial` events arrive rather than jumping/flickering.
+
+## Known issues/blockers
+None known; see Verification for what's unverified rather than known-broken.
+
+## Next action
+Manually run the extension against a live LeetCode problem page with `USE_MOCK_PROVIDERS` (or real keys) and a mic: start an interview, switch through all three `LayoutSwitcher` presets, speak and confirm the draft line updates live and clears cleanly into a final message, and confirm both level meters move independently (mic while talking, TTS while the interviewer is talking).

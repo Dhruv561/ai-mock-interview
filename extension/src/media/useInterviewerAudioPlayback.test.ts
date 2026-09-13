@@ -41,6 +41,7 @@ function fakePlayer() {
       muted = m;
     }),
     isMuted: vi.fn(() => muted),
+    getAnalyser: vi.fn(() => null),
   };
 }
 

@@ -3,19 +3,18 @@ import { useInterviewerAudioPlayback } from "../media/useInterviewerAudioPlaybac
 import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
+import { usePanelLayout } from "../state/panelLayout";
 import { useLiveInterviewEngine } from "../state/liveInterviewEngine";
 import { useInterview } from "../state/interviewStore";
 import { buildMockReview } from "../state/mockEngine";
-import { EndReviewButton } from "./EndReviewButton";
-import { HintButton } from "./HintButton";
-import { MicBadge } from "./MicBadge";
-import { MuteButton } from "./MuteButton";
+import { LayoutSwitcher } from "./LayoutSwitcher";
+import { DockedPanel } from "./panels/DockedPanel";
+import { FloatingPanel } from "./panels/FloatingPanel";
+import { SplitPanel } from "./panels/SplitPanel";
+import type { PanelBodyProps } from "./panels/PanelBodyProps";
 import { Review } from "./Review";
-import { SpeakingBadge } from "./SpeakingBadge";
-import { StageBadge } from "./StageBadge";
 import { StartScreen } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
-import { Transcript } from "./Transcript";
 
 const MAX_HINT_LEVEL = 3;
 
@@ -34,6 +33,7 @@ export function InterviewPanel() {
   const mic = useMicrophoneCapture(socket);
   const stage = useInterviewStage(socket);
   const audio = useInterviewerAudioPlayback(socket);
+  const { layout, setLayout } = usePanelLayout();
   useLiveInterviewEngine(socket, state.elapsedSeconds, dispatch);
 
   function handleStart() {
@@ -57,35 +57,42 @@ export function InterviewPanel() {
     });
   }
 
+  const isActive = state.status === "recording" || state.status === "paused";
+
+  const panelBodyProps: PanelBodyProps = {
+    state,
+    micStatus: mic.status,
+    getMicAnalyser: mic.getAnalyser,
+    isSpeaking: audio.isSpeaking,
+    isMuted: audio.isMuted,
+    onToggleMute: audio.toggleMute,
+    getTtsAnalyser: audio.getAnalyser,
+    stage,
+    onHint: handleHint,
+    hintDisabled: state.hints.length >= MAX_HINT_LEVEL,
+    onEnd: handleEnd,
+  };
+
   return (
     <div className="flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink">
       <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
 
+      {isActive && (
+        <div className="flex justify-end px-5 py-2">
+          <LayoutSwitcher value={layout} onChange={setLayout} />
+        </div>
+      )}
+
       {state.status === "idle" && <StartScreen onStart={handleStart} />}
 
-      {(state.status === "recording" || state.status === "paused") && (
-        <>
-          {/*
-           * Deliberate deviation from PRD §3.3 / docs/ui-reference.png,
-           * which show a live "RUBRIC SO FAR" section: product decision
-           * (2026-09-12) to only reveal scores on the Review screen so
-           * candidates aren't watching live numbers during the interview.
-           * See architecture.md §1 and progress.md decisions log.
-           */}
-          <MicBadge status={mic.status} />
-          <SpeakingBadge isSpeaking={audio.isSpeaking} />
-          <StageBadge stage={stage} />
-          <Transcript messages={state.messages} />
-          <div className="flex gap-2 px-5 py-4">
-            <MuteButton isMuted={audio.isMuted} onClick={audio.toggleMute} />
-            <HintButton
-              onClick={handleHint}
-              disabled={state.hints.length >= MAX_HINT_LEVEL}
-            />
-            <EndReviewButton onClick={handleEnd} />
-          </div>
-        </>
-      )}
+      {isActive &&
+        (layout === "docked" ? (
+          <DockedPanel {...panelBodyProps} />
+        ) : layout === "floating" ? (
+          <FloatingPanel {...panelBodyProps} />
+        ) : (
+          <SplitPanel {...panelBodyProps} />
+        ))}
 
       {state.status === "ended" && state.review && (
         <Review review={state.review} onRestart={handleStart} />

@@ -12,10 +12,13 @@ function clampHintLevel(level: number): 1 | 2 | 3 {
  * Drives the transcript from real backend events (Feature 08) — replaces
  * the scripted timeline that used to live in mockEngine.ts, now that the
  * backend genuinely produces interviewer.transcript/hint.response/
- * transcript.final. transcript.partial (mid-speech) is intentionally not
- * rendered here: TranscriptMessage has no "update in place" concept, and
- * appending a new message per partial would spam near-duplicates — only
- * the finished utterance is shown.
+ * transcript.final. transcript.partial (mid-speech) used to be dropped
+ * entirely (TranscriptMessage had no "update in place" concept, and
+ * appending a new message per partial would have spammed near-duplicates).
+ * It's now routed into state.candidateDraft instead — a single slot that
+ * each partial replaces rather than appends to — so the candidate sees
+ * their own speech land as they say it. transcript.final still produces
+ * the real TranscriptMessage and clears the draft (interviewReducer.ts).
  */
 export function useLiveInterviewEngine(
   socket: InterviewSocket,
@@ -64,6 +67,10 @@ export function useLiveInterviewEngine(
                 text: event.text,
               },
             });
+            break;
+
+          case "transcript.partial":
+            dispatch({ type: "candidateDraft/set", text: event.text });
             break;
 
           default:

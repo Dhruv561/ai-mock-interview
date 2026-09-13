@@ -176,6 +176,7 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 | 14 | End interview and review | PLANNED | P0 |
 | 15 | Persistence | PLANNED | P1 |
 | 16 | Integration hardening and demo readiness | PLANNED | P0 |
+| 17 | Panel layout presets, live candidate transcript, audio level meters | IMPLEMENTED (not VERIFIED) | P1 |
 
 ## Decisions log (Phase 6 addendum / transport fix)
 
@@ -183,3 +184,13 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 |---|---|---|
 | 2026-09-13 | The background service worker owns the WebSocket; the content script talks to it over a `chrome.runtime` port — **reverses** `architecture.md` §B's "content script owns the WS connection" | Forced, not preferred: leetcode.com's `default-src 'none'; connect-src 'self' https://challenges.cloudflare.com` CSP blocks any page-context connection to the local backend, verified by zero inbound attempts reaching a debug-logging backend during a full page load, while a service-worker probe connected first try from the same build. §B's original eviction concern is preserved by keeping all session state in the content script and making the worker a stateless pipe. Full record in `architecture.md` §B.1 |
 | 2026-09-13 | Mic audio is base64-encoded across the runtime port rather than moving capture into an offscreen document | `chrome.runtime` ports are JSON-only. ~33% overhead on a ~4.8KB chunk every 250ms is acceptable and was verified working live; an offscreen document is a larger change that shouldn't be made speculatively. Documented as the escape hatch if it ever bites |
+
+## Decisions log (Feature 17 — panel layout presets)
+
+| Date | Decision | Why |
+|---|---|---|
+| 2026-09-13 | Implemented all three panel postures from the imported "Interview Sidebar" design (docked/floating/split) as a live-switchable preset, instead of picking one | User asked to see and compare all three, not just adopt one; they share the same real state/handlers (`components/panels/PanelBodyProps.ts`) so this is arrangement, not three separate features |
+| 2026-09-13 | `transcript.partial` now renders live (`state.candidateDraft`), reversing Feature 08's "partials are dropped, only the finished utterance shows" | Explicitly requested ("I just want to see the stt and tts in real time, so it looks more fluent"); the old reasoning (no update-in-place concept) is solved with a dedicated single-slot draft field rather than appending to `messages` |
+| 2026-09-13 | Live rubric was **not** restored despite the design reference (1c) showing one | That's a separate, already-made, still-standing product decision (see Feature 13, `architecture.md` §1) that a design exploration doesn't get to silently override |
+| 2026-09-13 | The floating layout (1b) stays inside the existing reserved 420px column rather than the design's full-viewport-width overlay | Avoids a second page-space/reflow model alongside the one `content/layout.ts` already implements — CLAUDE.md's "keep the architecture simple" |
+| 2026-09-13 | This worktree was rebased onto local `main` before any implementation work, picking up the just-landed but not-yet-pushed Feature 10 (ElevenLabs) commit | `EnterWorktree`'s default `baseRef` branches from `origin/main`, which was one commit behind local `main` at the time; building on the stale base would have silently redone or conflicted with `SpeakingBadge`/`MuteButton`/`interviewerAudioPlayer.ts`, all of which this feature builds directly on top of |

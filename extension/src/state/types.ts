@@ -75,6 +75,10 @@ export interface InterviewUIState {
   stage: InterviewStage;
   elapsedSeconds: number;
   messages: TranscriptMessage[];
+  // The candidate's in-progress utterance, from transcript.partial events —
+  // replaced in place as speech continues, not appended to `messages` (see
+  // liveInterviewEngine.ts). null when nothing is currently being said.
+  candidateDraft: string | null;
   rubric: RubricState;
   hints: HintEntry[];
   review: FinalReview | null;
@@ -94,6 +98,7 @@ export const INITIAL_STATE: InterviewUIState = {
   stage: "intro",
   elapsedSeconds: 0,
   messages: [],
+  candidateDraft: null,
   rubric: INITIAL_RUBRIC,
   hints: [],
   review: null,
