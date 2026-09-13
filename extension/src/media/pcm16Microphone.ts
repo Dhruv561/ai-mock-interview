@@ -56,9 +56,9 @@ class PCM16MicrophoneCapture {
 
       // Create a ScriptProcessorNode to capture raw audio.
       // 24kHz @ 4096 samples = ~170ms per chunk.
-      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+      this.processor = this.audioContext!.createScriptProcessor(4096, 1, 1);
 
-      this.source = this.audioContext.createMediaStreamSource(this.stream);
+      this.source = this.audioContext!.createMediaStreamSource(this.stream!);
       this.source.connect(this.processor);
 
       this.processor.onaudioprocess = (event: AudioProcessingEvent) => {
@@ -72,7 +72,7 @@ class PCM16MicrophoneCapture {
       // Connect to a dummy destination to keep the audio graph running.
       // Use the AudioContext's destination, not a speakers destination,
       // to avoid audio feedback per architecture.md §B.2.
-      this.processor.connect(this.audioContext.destination);
+      this.processor.connect(this.audioContext!.destination);
 
       return true;
     } catch (error) {
