@@ -83,10 +83,10 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 8 — Hints + rubric (Feature 09, 11, 13)
 
-- [ ] `agents/code_analyser.py`: Python `ast`-based analysis + fixture tests
-- [ ] Hint level policy in controller + per-level prompts
-- [ ] Rubric sub-model in `InterviewState`, evidence-required schema, `rubric.updated` events
-- [ ] `Rubric.tsx` wired to live events (replace mock data)
+- [x] `agents/code_analyser.py`: Python `ast`-based analysis + fixture tests
+- [x] Hint level policy in controller + per-level prompts
+- [x] Rubric sub-model in `InterviewState`, evidence-required schema, `rubric.updated` events
+- [~] `Rubric.tsx` wired to live events — deliberately NOT done: architecture.md §O records a product decision that the live panel never renders rubric mid-interview (only the post-interview Review screen does, Feature 14). `Rubric.tsx` stays on its Feature 02 mock data as the live panel's (unused-for-rubric) placeholder; real wiring happens in Feature 14 instead.
 
 ## Phase 9 — Final review (Feature 14)
 

@@ -549,7 +549,7 @@ Proceed to Phase 7 (Feature 10 — ElevenLabs TTS) per `TODO.md`.
 # Feature 09 — Code analysis
 
 ## Status
-IN_PROGRESS
+VERIFIED (not DONE — see Verification)
 
 ## Priority
 P1
@@ -558,24 +558,39 @@ P1
 2026-09-13
 
 ## Current task
-Implementing `agents/code_analyser.py` (Python `ast`-based static analysis) in an isolated worktree, in parallel with Features 11/13, wired into the existing `code_analysis_observations` field already reserved on `InterviewState`.
+Complete. See `architecture.md` §K's "Implementation deviation" note: returns `list[str]` observation bullets rather than the structured `CodeAnalysis` object originally sketched, matching how the field was already typed and consumed.
 
 ## Acceptance criteria
-- [ ] meaningful code snapshots can be analysed
-- [ ] syntax/basic correctness information available
-- [ ] complexity observations available
-- [ ] potential issues available
-- [ ] analysis is not triggered on every keystroke
-- [ ] interviewer can consume analysis events
+- [x] meaningful code snapshots can be analysed
+- [x] syntax/basic correctness information available — `ast.parse` syntax-error detection
+- [x] complexity observations available — nested-loop-depth heuristic
+- [x] potential issues available — missing-return, recursion-without-base-case, bare/broad `except`, unused-import checks
+- [x] analysis is not triggered on every keystroke — `code.update` itself is already debounced client-side (`codeChangeDetector.ts`); a backend-side byte-identical-code skip additionally avoids redundant re-analysis
+- [x] interviewer can consume analysis events — surfaced as a "Code analysis observations:" block in the LLM's user prompt
 
 ## Completed
-- None yet.
+- `backend/app/agents/code_analyser.py` — `analyse_code(code, language) -> list[str]`; Python-only (per architecture.md's decision — other languages get `[]`, no static parser).
+- `backend/app/websocket/interview.py` — `CodeUpdateEvent` branch calls it and replaces `record.state.code_analysis_observations` with the latest snapshot's findings (replace, not accumulate — these describe the *current* code, not a history).
+- `backend/app/interview/prompts.py` — `build_user_prompt` includes the observations (or "(none)") right after the "Current code" block.
+- `backend/tests/test_code_analyser.py` (new) plus additions to `test_prompts.py`/`test_websocket_interview.py`.
 
 ## Remaining
-- All implementation work (in progress).
+None known.
+
+## Files changed
+- `backend/app/agents/code_analyser.py` (new), `backend/app/websocket/interview.py`, `backend/app/interview/prompts.py`
+- `backend/tests/test_code_analyser.py` (new), `backend/tests/test_prompts.py`, `backend/tests/test_websocket_interview.py`
+- `architecture.md`, `FEATURE_PROGRESS.md`
+
+## Tests/checks run
+- `uv run ruff check .` — all checks passed.
+- `uv run pytest -q` — full suite passes (170/170 after merging with Features 11/13, see below).
+
+## Known issues/blockers
+None. Same as every heuristic-based feature in this project: the static-analysis checks are approximate by design (documented per-check in code) and never presented to the candidate as authoritative — interviewer context only.
 
 ## Next action
-Merge the worktree branch, run backend tests, update this record.
+None — feature complete for the MVP's scope.
 
 ---
 
@@ -647,7 +662,7 @@ Whenever a real `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` become available: run
 # Feature 11 — Tiered hints
 
 ## Status
-IN_PROGRESS
+VERIFIED (not DONE — see Verification)
 
 ## Priority
 P1
@@ -656,24 +671,36 @@ P1
 2026-09-13
 
 ## Current task
-Implementing per-level hint prompts (`interview/prompts.py`) plus rubric evidence wiring (Feature 13, same slice — both live in `controller.py`/`prompts.py`/`websocket/interview.py`) in an isolated worktree, in parallel with Feature 09.
+Complete except the same "needs a real LLM key" gap as Feature 08 — the tiering logic is fully implemented and exercised via the mock provider, but a real Anthropic call producing genuinely well-calibrated hints per level is unverified live.
 
 ## Acceptance criteria
-- [ ] Hint 1 is conceptual
-- [ ] Hint 2 is more directed
-- [ ] Hint 3 can be highly specific
-- [ ] hint level is stored in interview state
-- [ ] requesting a hint updates the rubric/evidence where appropriate
-- [ ] interviewer does not unnecessarily reveal the full solution
+- [x] Hint 1 is conceptual — `HINT_LEVEL_GUIDANCE[1]`, no technique named
+- [x] Hint 2 is more directed — `HINT_LEVEL_GUIDANCE[2]`, names the data structure/idea but not the steps
+- [x] Hint 3 can be highly specific — `HINT_LEVEL_GUIDANCE[3]`, concrete step-level guidance, still never the solution code/final answer outright
+- [x] hint level is stored in interview state — `InterviewState.hint_level` (already existed; unchanged)
+- [x] requesting a hint updates the rubric/evidence where appropriate — rubric_updates can ride along with a `give_hint` action exactly like `ask_question`/`transition_stage`
+- [x] interviewer does not unnecessarily reveal the full solution — enforced by prompt wording (no override exists in this MVP) and the pre-existing level-3 cap in `controller.accept_proposal`
 
 ## Completed
-- None yet.
+See `architecture.md` §N's "Implementation notes" for the full design. Summary: `prompts.HINT_LEVEL_GUIDANCE` (levels 1-3), a `Hint level requested: <n>` marker line (computed as `min(hint_level + 1, MAX_HINT_LEVEL)`) added to the user prompt right after `Hint level so far`, `providers/llm/mock.py` now returns a distinct canned hint per requested level (keyed off that marker, same pattern as its existing stage/trigger keying).
 
 ## Remaining
-- All implementation work (in progress).
+- Real-LLM verification (see Current task) — same class of gap as Feature 08.
+
+## Files changed
+- `backend/app/interview/prompts.py`, `backend/app/providers/llm/mock.py`
+- `backend/tests/test_prompts.py`, `backend/tests/test_interviewer_agent.py`
+- `architecture.md`, `FEATURE_PROGRESS.md`
+
+## Tests/checks run
+- `uv run ruff check .` — all checks passed.
+- `uv run pytest -q` — full suite passes (170/170, merged with Feature 09/13).
+
+## Known issues/blockers
+None beyond the live-LLM gap above.
 
 ## Next action
-Merge the worktree branch, run backend tests, update this record.
+Whenever a real `ANTHROPIC_API_KEY` is available: run a real interview through all three hint levels and manually confirm the escalation actually feels graduated (conceptual → directed → concrete) and never leaks the solution — then flip to `DONE` alongside Feature 08.
 
 ---
 
@@ -706,7 +733,7 @@ Implement recording manager and browser permissions.
 # Feature 13 — Live rubric
 
 ## Status
-IN_PROGRESS
+VERIFIED (not DONE — see Verification)
 
 ## Priority
 P1
@@ -715,23 +742,35 @@ P1
 2026-09-13
 
 ## Current task
-Same slice as Feature 11 (see that record) — rubric_updates already exist as an optional field on `InterviewerAction`; this closes the loop: controller applies + clamps them onto `InterviewState.rubric`/a new evidence history, and `websocket/interview.py` emits `rubric.updated` events. Per architecture.md §O, the extension's live panel deliberately does NOT render rubric during the interview — this is backend-only plus data available for Feature 14's review screen.
+Complete except the same "needs a real LLM key" gap as Feature 08/11 — the scoring/evidence/event pipeline is fully implemented and exercised via the mock provider (whose canned "complexity" stage response now carries a demonstration `rubric_updates`), but real LLM-proposed rubric updates are unverified live. Per architecture.md §O's already-recorded product decision, the extension's live panel deliberately does NOT render rubric during the interview — this is backend-only; the data is ready for Feature 14's review screen.
 
 ## Acceptance criteria
-- [ ] rubric categories are defined
-- [ ] scores update based on evidence
-- [ ] updates are not excessively noisy
-- [ ] UI reflects scores (N/A live, per architecture.md §O — deferred to Feature 14's review screen)
-- [ ] score changes can be traced to evidence
+- [x] rubric categories are defined — already existed (`RubricCategory` in schemas.py, `InterviewState.rubric`)
+- [x] scores update based on evidence — `InterviewerAction.rubric_evidence` schema-enforced non-empty whenever `rubric_updates` is set
+- [x] updates are not excessively noisy — rubric updates only ever ride along with an already-gated, accepted action; no separate trigger
+- [ ] UI reflects scores — deliberately N/A live per architecture.md §O; deferred to Feature 14's review screen (not a gap, a product decision)
+- [x] score changes can be traced to evidence — new `InterviewState.rubric_history: list[RubricEvidenceEntry]` (categories touched, evidence string, timestamp), append-only and queryable by category
 
 ## Completed
-- None yet.
+See `architecture.md` §O's "Implementation notes". Summary: `controller.accept_proposal` clamps rubric_updates to [0,3], merges (not replaces) into `state.rubric`, and appends a `RubricEvidenceEntry` for any of the three rubric-carrying action types (`ask_question`, `give_hint`, `transition_stage`); `websocket/interview.py` emits `RubricUpdatedEvent` with the full current rubric dict whenever an accepted action carried updates.
 
 ## Remaining
-- All implementation work (in progress).
+- Real-LLM verification (see Current task) — same class of gap as Feature 08/11.
+
+## Files changed
+- `backend/app/interview/actions.py`, `backend/app/interview/state.py`, `backend/app/interview/controller.py`, `backend/app/websocket/interview.py`, `backend/app/providers/llm/mock.py`
+- `backend/tests/test_actions.py` (new), `backend/tests/test_interview_controller.py`, `backend/tests/test_prompts.py`, `backend/tests/test_websocket_interview.py`
+- `architecture.md`, `FEATURE_PROGRESS.md`
+
+## Tests/checks run
+- `uv run ruff check .` — all checks passed.
+- `uv run pytest -q` — full suite passes (170/170, merged with Features 09/11).
+
+## Known issues/blockers
+None beyond the live-LLM gap above.
 
 ## Next action
-Merge the worktree branch, run backend tests, update this record.
+Whenever a real `ANTHROPIC_API_KEY` is available: run a real interview, confirm the LLM actually proposes reasonable, evidence-backed rubric updates at plausible moments — then flip to `DONE` alongside Features 08/11. Feature 14 (final review) is the next feature that will actually consume `rubric_history`.
 
 ---
 

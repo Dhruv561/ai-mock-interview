@@ -32,4 +32,7 @@ tmp/
 temp/
 
 # Generated recordings
-recordings/.claude/worktrees/
+recordings/
+
+# Agent worktrees (created by the Agent tool's isolation: "worktree" option)
+.claude/worktrees/
