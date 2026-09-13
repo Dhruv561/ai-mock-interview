@@ -10,7 +10,7 @@ import { stopAllConvaiMicrophoneCapture } from "../media/convaiMicrophone";
 import { stopAllScreenCapture } from "../media/screen";
 import { stopAllInterviewerAudioPlayback } from "../media/interviewerAudioPlayer";
 import { releasePageSpace, reservePageSpace } from "./layout";
-import { isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
+import { getProblemSlug, isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
 
 const HOST_ID = "ai-mock-interview-root";
 const LOG_PREFIX = "[ai-mock-interview]";
@@ -114,10 +114,21 @@ mount();
 // LeetCode is a client-rendered SPA — navigating between problems doesn't
 // reload the page, so a MutationObserver is used to notice the route change
 // and re-mount (or tear down, if the new page isn't a supported problem).
-let lastPath = window.location.pathname;
+//
+// Compared by problem slug, not raw pathname: LeetCode's own Description/
+// Editorial/Solutions/Submissions tabs each live at a distinct pathname
+// under the same problem (/problems/two-sum/description/ vs .../submissions/,
+// etc — see leetcode.test.ts), and switching between them changes
+// window.location.pathname without actually leaving the problem. Comparing
+// raw pathname here quit every in-progress interview the moment a candidate
+// clicked one of those tabs (reported 2026-09-13) — comparing the slug only
+// resets when the candidate has actually navigated to a different problem
+// (or off problem pages entirely, where mount() below no-ops).
+let lastSlug = getProblemSlug();
 new MutationObserver(() => {
-  if (window.location.pathname === lastPath) return;
-  lastPath = window.location.pathname;
+  const slug = getProblemSlug();
+  if (slug === lastSlug) return;
+  lastSlug = slug;
   resetInterviewSession();
   resetConvaiSession();
   unmount();
