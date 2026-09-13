@@ -707,7 +707,7 @@ Whenever a real `ANTHROPIC_API_KEY` is available: run a real interview through a
 # Feature 12 — Screen/tab recording
 
 ## Status
-IN_PROGRESS
+VERIFIED (not DONE — see Verification)
 
 ## Priority
 P1
@@ -716,23 +716,32 @@ P1
 2026-09-13
 
 ## Current task
-Extension-only slice (mirrors Feature 05's microphone module exactly): `media/screen.ts` + `useScreenCapture.ts`, wired into the same Start/End handlers as mic capture in `InterviewPanel.tsx`. Running in parallel with Feature 15 (persistence, backend-only — zero file overlap).
+Complete except live-in-browser manual verification (getDisplayMedia's real permission prompt, real "Stop sharing" browser UI, and an actual recorded artefact) — everything else is implemented and covered by unit tests against injectable factories, same pattern as the mic module.
 
 ## Acceptance criteria
-- [ ] user understands recording state
-- [ ] tab/screen capture can start/stop
-- [ ] recording errors are handled
-- [ ] recording can be stored or finalised after interview
-- [ ] code understanding does not depend on OCR
+- [x] user understands recording state — `ScreenBadge.tsx` mirrors `MicBadge.tsx` (idle/requesting/active/denied/unsupported)
+- [x] tab/screen capture can start/stop — `media/screen.ts` mirrors `microphone.ts`'s single-active-capture invariant, idempotent stop, injectable factories
+- [x] recording errors are handled — permission denial / unsupported browser both degrade to `null` without throwing; interview proceeds without recording (never blocks the interview)
+- [x] recording can be stored or finalised after interview — chunks buffered internally per capture, exposed via `getRecordingBlob()`; no upload endpoint yet (deliberate scope boundary, see below)
+- [x] code understanding does not depend on OCR — unaffected; code is still read via the editor bridge (Feature 04), recording is an additional signal only (CLAUDE.md principle 6)
 
 ## Completed
-- None yet.
+- `extension/src/media/screen.ts`: `requestScreenStream()`, `startScreenCapture()`, `stopAllScreenCapture()`, `isScreenCapturing()` — structurally identical to `microphone.ts`.
+- `extension/src/media/useScreenCapture.ts`: hook mirroring `useMicrophoneCapture.ts` (status state machine, generation-counter race guard, unmount cleanup); sends `screen.recording.started`/`.stopped` client events (only when a capture actually went active).
+- `extension/src/components/ScreenBadge.tsx`: status badge mirroring `MicBadge.tsx`'s layout/palette/typography exactly.
+- Wired into `InterviewPanel.tsx`: `useScreenCapture(socket)` alongside mic; `start()`/`stop()` called best-effort (not awaited) from `handleStart`/`handleEnd`; `ScreenBadge` rendered in the badge row.
+- Native "Stop sharing" browser UI handled via `track.onended` → capture's own `stop()` → `onStreamEnded` callback, so the browser-driven stop path produces the same status transition and socket event as a user-driven End click.
+- Tests: `screen.test.ts`, `useScreenCapture.test.ts` mirroring the mic tests' coverage (permission denied, unsupported mime, single-active-capture, idempotent stop, late-chunk-after-stop guard, generation-race guards, unmount teardown) plus screen-specific cases (buffered-blob retrieval, onended handling, event gating).
 
 ## Remaining
-- All implementation work (in progress).
+- No upload endpoint exists yet for the buffered recording blob — `getRecordingBlob()` is exposed on the capture handle for a future feature to consume; not required by this feature's acceptance criteria (CLAUDE.md principle 2: avoid infrastructure that doesn't improve the demo).
+- Live-in-browser manual verification: real `getDisplayMedia` permission prompt, real tab-share selection, real "Stop sharing" browser button, confirm a recorded blob actually plays back — needs a real Chrome session (same category of gap as Feature 05's real-mic verification).
+
+## Verification
+`npm run --workspace extension typecheck/lint/test/build` all pass (113 tests across 19 files, up from 96/17). Re-run and confirmed by the orchestrator after merge.
 
 ## Next action
-Merge, run full extension test/typecheck/lint/build, update this record.
+Whenever there's a real Chrome session available: start an interview, share a tab, confirm the badge reflects state correctly, click "Stop sharing" from the browser's own UI (not the extension), confirm the badge and socket event both update — then flip to `DONE`.
 
 ---
 

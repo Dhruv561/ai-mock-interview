@@ -96,9 +96,9 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 10 — Screen recording + polish (Feature 12)
 
-- [ ] `screen.ts`: `getDisplayMedia`, local `MediaRecorder`, post-interview upload
-- [ ] Recording indicator polish, animation pass (minimal, per design constraints)
-- [ ] Error-state UI pass across all `architecture.md` §V scenarios
+- [x] `screen.ts`: `getDisplayMedia`, local `MediaRecorder` buffering (upload endpoint deferred — no consumer exists yet)
+- [x] Recording indicator (`ScreenBadge.tsx`, mirrors `MicBadge.tsx`)
+- [ ] Error-state UI pass across all `architecture.md` §V scenarios — still open, broader than just screen capture
 
 ## Phase 11 — Persistence + end-to-end hardening (Feature 15, 16)
 
