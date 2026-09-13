@@ -14,9 +14,9 @@ Do this well before you're on stage — ideally the night before, at minimum 30+
 
 Real providers make the demo land harder, but every one of them is optional — the app runs the full happy path on mock providers with **zero API keys** (`USE_MOCK_PROVIDERS=true`, the default; see `README.md` and `.env.example`). Prioritize in this order if you only have time/keys for some:
 
-1. **`ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` — highest impact.** A real interviewer voice is the single biggest "wow" factor in a live demo. Worth prioritizing over the LLM key if you have to choose.
+1. **`ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` — highest impact, and now does double duty.** A real interviewer voice is the single biggest "wow" factor in a live demo, and since 2026-09-13 this same key also drives real speech-to-text by default (`STT_PROVIDER=elevenlabs`) — one key, both voice and live transcription. Worth prioritizing over the LLM key if you have to choose.
 2. **`ANTHROPIC_API_KEY` — matters for genuinely contextual questions.** With the mock LLM provider, questions are deterministic, stage-appropriate canned lines — fine for rehearsing flow, but they won't reference the candidate's actual words or code. A real key is what makes FR8's "ask a follow-up based on what I just said" claim true on stage.
-3. **`DEEPGRAM_API_KEY` — real speech-to-text.** Needed if you want to actually talk and see your own words transcribed live rather than using the `dev.simulate_transcript` fallback.
+3. **`DEEPGRAM_API_KEY` — alternate speech-to-text, not needed if you already set `ELEVENLABS_API_KEY`.** Only relevant if you set `STT_PROVIDER=deepgram` (e.g. ElevenLabs STT misbehaves on stage and you want a fallback rehearsed in advance).
 4. **`DATABASE_URL` — not worth it for the demo.** Persistence only matters if you're demoing "look, it's saved" — skip unless someone asks.
 
 **Mock mode is your safe fallback.** If a key dies right before presenting (rate limit, revoked, wrong env var, whatever), set `USE_MOCK_PROVIDERS=true` and restart the backend — the whole flow still works, just with canned interviewer lines and no voice. Rehearse this switch once so it's not the first time you've done it under pressure.
@@ -76,7 +76,7 @@ Watch the header badge reach **BACKEND CONNECTED**.
 
 Before writing code, explain your plan verbally: *"I'll brute-force check every pair first, then optimize with a hash map."*
 
-Watch your words appear in the transcript panel as you speak (real Deepgram STT if configured, or type into `dev.simulate_transcript` if running mock-only).
+Watch your words appear in the transcript panel as you speak (real ElevenLabs or Deepgram STT if configured, or type into `dev.simulate_transcript` if running mock-only).
 
 *"This is a live transcript, not a script — it's building line by line as I talk."*
 
@@ -120,7 +120,7 @@ These are recorded gaps in `FEATURE_PROGRESS.md`/`architecture.md`, not secrets 
 
 - **Real-provider verification gap (Features 05, 08, 10, 11, 13, 14, 15).** Every one of these is `VERIFIED` against mock providers but has not been exercised live against its real API in this environment (no keys were available during development). If this is the first time you're running with real keys, budget a full rehearsal pass first — don't let the demo be the first live test.
 - **Reconnects lose transcription for the rest of the interview** (`progress.md`, Known issues). The backend only opens an STT session on `session.start`, not on `session.resume`, so if the WebSocket drops and reconnects mid-interview, live transcription stops working even though the interview itself survives. **Don't demo killing the connection mid-session unless that's a deliberate, rehearsed beat** — if it happens by accident, keep talking through your code out loud; the interview keeps running, just without a fresh transcript.
-- **STT failure degrades to silence, not a crash** (`architecture.md` §V). If Deepgram drops or errors, the backend emits a recoverable `stt_unavailable` error and the session continues — no new transcript will appear, but code updates, hints, and the interviewer still work. If this happens on stage: **say so plainly** ("looks like transcription dropped — I'll keep narrating and the interview will still track the code") and keep going. Do not stop and try to fix it live.
+- **STT failure degrades to silence, not a crash** (`architecture.md` §V). If the STT provider (ElevenLabs by default, or Deepgram) drops or errors, the backend emits a recoverable `stt_unavailable` error and the session continues — no new transcript will appear, but code updates, hints, and the interviewer still work. If this happens on stage: **say so plainly** ("looks like transcription dropped — I'll keep narrating and the interview will still track the code") and keep going. Do not stop and try to fix it live.
 - **TTS failure degrades to text, not silence** (`architecture.md` §V). If ElevenLabs fails, `interviewer.transcript` text still always arrives in the panel — just without audio. If the voice stops mid-demo, read the interviewer's line out loud yourself and continue; don't wait on it.
 - **No WS-endpoint origin/auth check yet** (Feature 06 known issue) — fine for a local demo, but don't leave the backend port exposed on a shared/public network during the event.
 - **Screen/tab recording is unverified in a real browser** (Feature 12) — the permission prompt, the native "Stop sharing" button, and the resulting recording blob have only been tested via injected mocks, not a real `getDisplayMedia` flow. **Skip screen recording in the live demo unless you've personally rehearsed it end-to-end first**; it isn't required for the core flow (mic + code extraction are sufficient per `architecture.md` §V).

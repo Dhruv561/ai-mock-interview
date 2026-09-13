@@ -6,9 +6,9 @@ LeetCode stays the main workspace. The extension adds a persistent right-side in
 
 ## Project status
 
-**The full MVP pipeline is built.** LeetCode problem/code extraction, the real-time WebSocket transport, mic capture with Deepgram speech-to-text, the backend interview state machine, an AI interviewer (Anthropic Claude, with a deterministic mock fallback), ElevenLabs text-to-speech, static code analysis, tiered hints, an evidence-based live rubric, an evidence-grounded final review, screen/tab recording, and session persistence are all implemented and covered by automated tests against mock providers. Almost every feature is `VERIFIED`; a few are `DONE`. Only Feature 16 (integration hardening and demo readiness) remains.
+**The full MVP pipeline is built.** LeetCode problem/code extraction, the real-time WebSocket transport, mic capture with ElevenLabs speech-to-text (Deepgram available as a fallback), the backend interview state machine, an AI interviewer (Anthropic Claude, with a deterministic mock fallback), ElevenLabs text-to-speech, static code analysis, tiered hints, an evidence-based live rubric, an evidence-grounded final review, screen/tab recording, and session persistence are all implemented and covered by automated tests against mock providers. Almost every feature is `VERIFIED`; a few are `DONE`. Only Feature 16 (integration hardening and demo readiness) remains.
 
-`VERIFIED` is not `DONE`: several features (05, 08, 10, 11, 13, 14, 15) are implemented and tested end-to-end against mock providers, but still need a live pass with real `ANTHROPIC_API_KEY`/`DEEPGRAM_API_KEY`/`ELEVENLABS_API_KEY`/`DATABASE_URL` values before they can be marked `DONE` — that's a credentials/live-verification gap, not missing implementation. See `progress.md` for the current dashboard and `FEATURE_PROGRESS.md` for full per-feature acceptance criteria and status. `DEMO.md` has a step-by-step demo rehearsal script.
+`VERIFIED` is not `DONE`: several features (05, 08, 10, 11, 13, 14, 15) are implemented and tested end-to-end against mock providers, but still need a live pass with real `ANTHROPIC_API_KEY`/`ELEVENLABS_API_KEY`/`DATABASE_URL` values (or `DEEPGRAM_API_KEY` if you set `STT_PROVIDER=deepgram`) before they can be marked `DONE` — that's a credentials/live-verification gap, not missing implementation. See `progress.md` for the current dashboard and `FEATURE_PROGRESS.md` for full per-feature acceptance criteria and status. `DEMO.md` has a step-by-step demo rehearsal script.
 
 ## Documentation map
 
@@ -38,7 +38,7 @@ FastAPI backend
   ├─ Interview controller (decides: silent / ask / hint / transition — enforces product rules)
   ├─ Interviewer + evaluator agents (Anthropic Claude, structured JSON output)
   ├─ Code analysis (Python AST for Python, LLM-only for other languages)
-  ├─ Speech-to-text (Deepgram, streaming)
+  ├─ Speech-to-text (ElevenLabs realtime, streaming; Deepgram selectable)
   ├─ Text-to-speech (ElevenLabs, streaming)
   └─ Persistence (Postgres/Supabase in prod, in-memory in local dev)
 ```
@@ -73,7 +73,7 @@ npm install --legacy-peer-deps   # see note below
 By default `USE_MOCK_PROVIDERS=true`, so the entire happy path runs with **no API keys at all**. Two things to know when you do add a key:
 
 - `USE_MOCK_PROVIDERS=true` overrides **every** key, so adding one changes nothing until you also set it to `false`.
-- Each provider then falls back to its own mock independently (`if use_mock_providers or not <key>`), so setting only `DEEPGRAM_API_KEY` gives you real speech-to-text while the interviewer LLM stays mocked. You don't have to enable everything at once.
+- Each provider then falls back to its own mock independently (`if use_mock_providers or not <key>`), so setting only `ELEVENLABS_API_KEY` gives you real speech-to-text (and TTS) while the interviewer LLM stays mocked. You don't have to enable everything at once. STT provider is `STT_PROVIDER` (`elevenlabs` by default, or `deepgram` if you'd rather use `DEEPGRAM_API_KEY`).
 - `get_settings()` is `@lru_cache`d, so a changed key needs a real backend restart — uvicorn's `--reload` will not pick it up.
 
 See `architecture.md` §S.

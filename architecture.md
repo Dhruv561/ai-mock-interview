@@ -15,7 +15,7 @@ The PRD leaves technology choices open in several places ("an LLM API suitable f
 | Area | Decision | Reasoning |
 |---|---|---|
 | Interviewer/evaluator LLM | Anthropic Claude (Messages API, Sonnet-class model), via a `LLMProvider` interface | Structured JSON output via tool-use is reliable; provider is swappable and mockable |
-| Streaming STT | Deepgram (Nova streaming websocket API) | Native streaming, accepts WebM/Opus directly (matches `MediaRecorder` output with zero client-side transcoding), simple to mock |
+| Streaming STT | ElevenLabs realtime STT websocket (default, swapped from Deepgram 2026-09-13, see §H.1), Deepgram kept as an alternate | Requested by the user; ElevenLabs' realtime endpoint requires raw PCM audio (no container autodetection), which is why extension mic capture moved from `MediaRecorder`/WebM to a Web Audio PCM16/16kHz pipeline — both providers now consume the same wire format |
 | TTS | ElevenLabs (mandated by PRD) | streaming endpoint, audio relayed to extension over the existing WebSocket |
 | Database | Postgres (Supabase in prod, local Postgres or pure in-memory in dev) behind a `SessionRepository` interface | Keeps a single relational dependency; JSONB columns avoid an over-normalized schema for a hackathon |
 | Extension media capture | `getUserMedia` (mic) and `getDisplayMedia` (screen/tab) called **directly from the content script**, not `chrome.tabCapture` | `chrome.tabCapture` requires an extension page + awkward activeTab flows in MV3; standard Web APIs triggered by a user gesture on the injected panel are simpler and match "explicit permission" UX requirement (NFR3) |
@@ -211,9 +211,9 @@ The original decision put the WebSocket in the content script alongside the UI a
 - **Responsibility:** capture candidate speech, chunk it, stream to backend.
 - **Files:** `extension/src/media/microphone.ts`.
 - **Inputs:** `getUserMedia({audio: true})` stream.
-- **Outputs:** `MediaRecorder` chunks (WebM/Opus, ~250ms) sent as binary WS frames.
-- **Dependencies:** browser `MediaRecorder` API, WebSocket connection (§G) must be open first.
-- **Testing strategy:** manual — no reliable way to unit test real mic capture; a mock `AudioSource` (replays a fixture WebM file) is used in dev/testing to exercise the pipeline without real hardware.
+- **Outputs:** raw PCM16 mono 16kHz chunks (~250ms/~8000 bytes each) sent as binary WS frames — changed 2026-09-13 from `MediaRecorder` WebM/Opus when the default STT provider moved to ElevenLabs, whose realtime endpoint has no container-autodetection mode (see §H.1).
+- **Dependencies:** Web Audio API (`AudioContext`/`ScriptProcessorNode`, not `AudioWorklet` — see §H.1 for why), WebSocket connection (§G) must be open first.
+- **Testing strategy:** manual for real mic capture (no reliable way to unit test it); the chunking/lifecycle logic (accumulation into fixed-size PCM chunks, start/stop invariants) is unit tested via an injectable `AudioProcessorFactory`, same pattern as `networking/websocket.ts`'s `WebSocketFactory`.
 - **Risks:** permission denial must degrade gracefully (§V). Chunk cadence vs STT latency tradeoff — 250ms chosen as a starting point, tunable.
 - **Done when:** speaking into the mic produces `transcript.partial`/`transcript.final` events end-to-end with a real STT provider.
 
@@ -236,7 +236,7 @@ The original decision put the WebSocket in the content script alongside the UI a
 - **Inputs:** typed client events (§ event catalogue below), binary mic chunks.
 - **Outputs:** typed server events, binary TTS audio chunks.
 - **Dependencies:** FastAPI's native `WebSocket` support; no separate message broker.
-- **Framing convention:** **text frames = JSON control events** (validated against Pydantic on the way in, Zod on the way out); **binary frames = raw audio bytes** (mic chunk WebM/Opus when sent by the client, TTS PCM/MP3 chunk when sent by the server) — direction and session state disambiguate which kind of audio a binary frame is; no custom header needed since a session only ever streams one audio kind at a time in each direction. Every event sent from server to client carries an incrementing `seq`.
+- **Framing convention:** **text frames = JSON control events** (validated against Pydantic on the way in, Zod on the way out); **binary frames = raw audio bytes** (mic chunk PCM16/16kHz when sent by the client — WebM/Opus before 2026-09-13, see §H.1 — TTS PCM chunk when sent by the server) — direction and session state disambiguate which kind of audio a binary frame is; no custom header needed since a session only ever streams one audio kind at a time in each direction. Every event sent from server to client carries an incrementing `seq`.
 - **Reconnect protocol:** client backs off exponentially (1s → 2s → 4s → … capped at 15s). On reconnect it sends `session.resume {session_id, last_seq}`. The backend keeps a per-session in-memory ring buffer of the last ~200 events for a grace window (~5 minutes after disconnect) and replays anything after `last_seq` before resuming live dispatch. This is a single-process, in-memory design — acceptable for a hackathon demo, documented as a scaling limitation (§Q).
 - **Testing strategy:** backend contract tests — malformed/missing-field events rejected with a typed `error` event, not a crash; reconnect-and-replay integration test using two sequential WS client connections against one session.
 - **Risks:** binary/text frame disambiguation is implicit — if this ever needs to carry two binary kinds in the same direction, revisit and add an explicit header. Not needed for MVP.
@@ -279,13 +279,27 @@ error                      { code: str, message: str, recoverable: bool }
 ### H. Streaming speech-to-text
 
 - **Responsibility:** turn mic audio into partial + final transcript segments, distinguishing candidate speech (interviewer speech is synthesized text, not transcribed).
-- **Files:** `backend/app/providers/stt/{base.py,deepgram.py,mock.py}`.
-- **Inputs:** binary audio chunks relayed from the WS endpoint.
-- **Outputs:** `transcript.partial` (best-effort, frequent) and `transcript.final` (segment boundary, e.g. on Deepgram's `speech_final`) events.
-- **Dependencies:** Deepgram streaming websocket API (backend-to-Deepgram, key never touches the client).
-- **Testing strategy:** provider interface tested against a recorded fixture via the mock provider; real Deepgram integration verified manually with actual speech.
-- **Risks:** Deepgram connection failure mid-session — must degrade to "type to simulate" dev path or a visible "transcription unavailable" status without killing the session (§V).
+- **Files:** `backend/app/providers/stt/{base.py,deepgram.py,elevenlabs.py,mock.py}`, selected by `Settings.stt_provider` (default `"elevenlabs"`, `"deepgram"` also selectable).
+- **Inputs:** binary audio chunks relayed from the WS endpoint — as of 2026-09-13, headerless raw PCM16 mono 16kHz (see §H.1), not WebM/Opus.
+- **Outputs:** `transcript.partial` (best-effort, frequent) and `transcript.final` (segment boundary — ElevenLabs' own VAD `commit_strategy`, or Deepgram's `speech_final`) events.
+- **Dependencies:** ElevenLabs realtime STT websocket by default (backend-to-ElevenLabs, key never touches the client, same `elevenlabs_api_key` setting as the TTS provider §M); Deepgram kept as an alternate.
+- **Testing strategy:** provider interface tested against a recorded fixture via the mock provider; the ElevenLabs provider's message-parsing logic (`relay_message`) is unit-tested directly (partial/committed routing, unknown message types ignored, malformed JSON ignored). Neither real provider has been exercised against a live connection this session — no API key available in this environment.
+- **Risks:** STT connection failure mid-session — must degrade to "type to simulate" dev path or a visible "transcription unavailable" status without killing the session (§V).
 - **Done when:** Feature 05 acceptance criteria met with a real provider connected.
+
+#### H.1 Provider swap: Deepgram → ElevenLabs (2026-09-13)
+
+Swapped the default STT provider from Deepgram to ElevenLabs at the user's request. This was **not** a same-shape provider swap: ElevenLabs' realtime STT websocket (`wss://api.elevenlabs.io/v1/speech-to-text/realtime`) has no container-autodetection mode — it only accepts raw PCM/µ-law samples (`audio_format=pcm_16000` etc.), sent as base64 inside JSON text messages, unlike Deepgram's binary-frame-with-autodetected-WebM/Opus approach that this project was originally built around (see the now-superseded rationale in the provider table above this section).
+
+Three real, load-bearing changes followed from that, not just a new provider file:
+
+1. **`extension/src/media/microphone.ts` capture pipeline replaced.** `MediaRecorder`/WebM-Opus → a Web Audio `ScriptProcessorNode` graph producing raw PCM16 mono, decimated to 16kHz (nearest-neighbour, not anti-aliased — acceptable for speech-band STT on this timeline). `AudioWorklet` would be the modern equivalent, but its `addModule()` call is a fetch-like resource load made from the content script's page-context world, and §B.1 already found that leetcode.com's CSP silently kills exactly that class of content-script network activity (that's *why* the WebSocket itself had to move to the service worker). `ScriptProcessorNode` needs no such fetch, so it was chosen specifically to not repeat that failure — a real architectural constraint, not a stylistic preference for the deprecated API. A future migration to `AudioWorklet` via an extension-owned offscreen document (not subject to the page's CSP) is a reasonable follow-up.
+2. **Deepgram's own connection string changed too.** Every STT provider now receives the same raw-PCM wire format regardless of which one is selected, so Deepgram's query string gained explicit `encoding=linear16&sample_rate=16000` (previously omitted deliberately, relying on WebM autodetection that no longer applies since the client stopped producing WebM at all).
+3. **`extension/src/networking/websocket.ts`'s pending-audio-buffer trimming simplified.** The original policy specifically preserved index 0 because MediaRecorder's WebM header lived only in the first chunk. Raw PCM chunks have no such header dependency — every chunk decodes independently — so trimming reverted to plain oldest-first FIFO.
+
+`Settings.stt_provider: Literal["elevenlabs", "deepgram"]` (default `"elevenlabs"`) makes the selection explicit rather than inferring it from which key happens to be set, since `elevenlabs_api_key` is now meaningful for both STT and TTS.
+
+Not verified live this session (no ElevenLabs key available) — same category of gap as the original Deepgram/ElevenLabs-TTS work: implemented against ElevenLabs' documented protocol, structurally sound (backend unit tests + full extension test/typecheck/lint/build suite green), unverified against a real connection. See FEATURE_PROGRESS.md Feature 05's dated update for the next concrete verification step.
 
 ### I. Interview state machine
 

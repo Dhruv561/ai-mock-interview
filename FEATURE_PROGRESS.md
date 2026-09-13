@@ -278,7 +278,7 @@ None — feature complete.
 # Feature 05 — Microphone and speech-to-text
 
 ## Status
-DONE
+IMPLEMENTED (was DONE; reopened 2026-09-13 by the ElevenLabs provider swap — see dated update at the end of this record)
 
 ## Priority
 P0
@@ -287,7 +287,7 @@ P0
 2026-09-12
 
 ## Current task
-Complete except one manual check that needs a real Deepgram key + a machine where the browser can reach the backend (see Verification below) — same class of gap as Feature 06, not a known code defect.
+2026-09-13: default STT provider swapped Deepgram → ElevenLabs, which forced a real change to the mic capture pipeline (WebM/Opus → raw PCM16/16kHz). Fully implemented, unit-tested, and passing the whole check.sh suite, but not yet live-verified with a real ElevenLabs key + real mic — that's the next concrete step. See the dated update below for the full record; everything above it describes the original Deepgram-based implementation and stays accurate as history except where superseded.
 
 ## Acceptance criteria
 - [x] microphone permission flow works — `getUserMedia` requested on Start, denial/no-hardware/unsupported-browser all resolve to a status the UI shows instead of throwing
@@ -346,12 +346,49 @@ Next action for whoever picks this up: on a machine where the browser and backen
 **UPDATE 2026-09-13 — live audio path now verified end-to-end (status stays `VERIFIED`, not `DONE`).** With the CSP transport blocker fixed (Feature 06), real mic capture was confirmed reaching the live backend from the user's own Chrome: `MIC ON` in the panel, and the backend debug log showing a continuous stream of binary frames (~4846 bytes per 250ms chunk, first chunk carrying the WebM/EBML header `1a 45 df a3`, i.e. a genuine Opus/WebM container and not silence or a malformed buffer).
 Note this path changed shape since the original implementation: binary chunks now cross a `chrome.runtime` port base64-encoded before reaching the socket in the service worker (see `architecture.md` §B.1), so `sendAudioChunk` is no longer a direct `ws.send(blob)`. That relay is what was verified above.
 **Superseded 2026-09-13:** a real `DEEPGRAM_API_KEY` was supplied and the real provider is now verified live — see the section above. This feature is `DONE`.
+
+## UPDATE 2026-09-13 (later the same day) — default STT provider swapped to ElevenLabs, status reopened to IMPLEMENTED
+
+User asked to switch from Deepgram to ElevenLabs for STT. Investigated ElevenLabs' actual API before writing anything (architecture.md §H.1 has the full record) and found this wasn't a same-shape swap: ElevenLabs' realtime STT websocket has no container-autodetection mode, unlike Deepgram — it only accepts raw PCM/µ-law audio. Asked the user how to handle that; they chose the full realtime swap (change the extension's mic capture format too, not a batch-mode workaround or a backend-only scaffold).
+
+### Completed
+- `backend/app/providers/stt/elevenlabs.py` (new) — realtime STT provider (`wss://api.elevenlabs.io/v1/speech-to-text/realtime`, model `scribe_v2_realtime`, `commit_strategy=vad`), same `STTProvider` interface as Deepgram/mock. `relay_message()` (the message-parsing logic) split out for direct unit testing.
+- `backend/app/providers/stt/deepgram.py` — connection string updated to `encoding=linear16&sample_rate=16000` (previously relied on WebM autodetection, which no longer holds now that the client sends raw PCM regardless of provider). Docstring updated to explain it's no longer the default.
+- `backend/app/config.py` — new `Settings.stt_provider: Literal["elevenlabs", "deepgram"]`, default `"elevenlabs"`. Explicit rather than inferred from which key is set, since `elevenlabs_api_key` is now meaningful for both STT and TTS.
+- `backend/app/providers/stt/__init__.py` — factory updated for the new selector; mock is still the fallback whenever `USE_MOCK_PROVIDERS=true` or the selected provider's key is missing.
+- `extension/src/media/microphone.ts` — capture pipeline replaced: `MediaRecorder`/WebM-Opus → a Web Audio graph (`AudioContext` + `ScriptProcessorNode`, routed through a zero-gain node so the candidate never hears themself) producing PCM16 mono, decimated to 16kHz (nearest-neighbour), batched into ~250ms/~8000-byte chunks — same public shape (`MicrophoneCapture`, `Blob` chunks via `onChunk`) so `useMicrophoneCapture.ts` and the transport layer needed zero changes. `ScriptProcessorNode`, not `AudioWorklet`, deliberately — `addModule()` is a fetch-like content-script network call, and architecture.md §B.1 already found leetcode.com's CSP kills that class of activity (that's why the WebSocket itself lives in the service worker). Same lifecycle guarantees as before (single active capture, idempotent stop, no post-stop delivery), re-verified by an equivalent injectable-factory (`AudioProcessorFactory`) test suite.
+- `extension/src/networking/websocket.ts` — pending-audio-buffer overflow trimming simplified from "preserve index 0 (the WebM header)" to plain oldest-first FIFO, since raw PCM chunks have no header dependency between them. Comments updated to stop describing WebM/EBML specifics that no longer apply.
+- `extension/src/networking/portSocket.ts` — one stale comment fixed (referenced "Opus chunk" sizing, now PCM16).
+- `.env.example` — documented `STT_PROVIDER`.
+- `architecture.md` — provider table row, §E, §G's framing convention, and §H updated; new §H.1 records the full swap decision, what changed and why, and what's still unverified.
+
+### Remaining
+- Live verification with a real `ELEVENLABS_API_KEY` + real mic: click Start, grant mic permission, speak, confirm `transcript.partial`/`transcript.final` events arrive with plausible text. Same category of gap the original Deepgram work had before a key was supplied.
+- The PCM downsample is nearest-neighbour, not anti-aliased. Untested for whether that's good enough for real transcription quality — a low-pass filter ahead of decimation is the fix if it isn't.
+- `ScriptProcessorNode` is a deprecated API. Works today; a future migration to `AudioWorklet` via an extension-owned offscreen document (sidesteps the page-CSP problem entirely, unlike calling it from the content script) is a reasonable follow-up, not required for the demo.
+
+### Files changed
+- `backend/app/providers/stt/{elevenlabs.py (new),deepgram.py,__init__.py}`, `backend/app/config.py`, `backend/tests/test_stt_providers.py`
+- `extension/src/media/{microphone.ts,microphone.test.ts}`, `extension/src/networking/{websocket.ts,websocket.test.ts,portSocket.ts}`
+- `.env.example`, `architecture.md`, `FEATURE_PROGRESS.md`
+
+### Tests/checks run
+- `uv run ruff check .` / `uv run pytest -q` (backend) — 209/209 pass, including new `test_stt_providers.py` cases: `get_stt_provider` factory selection (mock-when-mock-mode, mock-when-no-elevenlabs-key, elevenlabs-by-default-when-configured, mock-when-deepgram-selected-but-no-key, deepgram-when-explicitly-selected) and `relay_message` unit tests (routes `partial_transcript`, routes `committed_transcript`, ignores other message types / malformed JSON / empty text).
+- `npm run --workspace extension test` — 140/140 pass, including rewritten `microphone.test.ts` (forwards a chunk once enough samples accumulate, withholds before threshold, carries a partial remainder into the next chunk, stops the processor and releases tracks, returns null when Web Audio is unavailable, single-active-capture / idempotent-stop / no-post-stop-delivery / in-flight-callback-after-stop lifecycle guards) and updated `websocket.test.ts` audio-buffering cases (FIFO trim instead of header-preserving trim).
+- `npm run --workspace extension typecheck` / `lint` / `build` — all pass.
+- `bash scripts/check.sh` — full sequence (both projects, incl. the secret tripwire) passes end-to-end.
+- No live browser/real-provider check this session (see Remaining).
+
+### Verification
+IMPLEMENTED, not VERIFIED/DONE. Every unit-testable and static-check surface is green (backend provider selection and message parsing, extension capture lifecycle, full check.sh). What's unverified is the same live-hardware-and-key gap this feature already had once before Deepgram was proven live: needs a real `ELEVENLABS_API_KEY`, `USE_MOCK_PROVIDERS=false`, a real mic, and a moment of actual speech.
+
 ## Known issues/blockers
 - Same WS-endpoint auth/origin gap already tracked under Feature 06 — applies here too since audio flows over the same connection.
-- The one live mic+Deepgram check described above, blocked by tooling/no-key, not a known code defect.
+- The live ElevenLabs+mic check described above, blocked by no key available in this environment, not a known code defect.
+- PCM downsample quality (nearest-neighbour) unverified against real transcription accuracy.
 
 ## Next action
-Optional live check described above, then flip to `DONE` (alongside Feature 06). Otherwise: proceed to Phase 5 (Feature 07 — interview state machine), the next item in `TODO.md`.
+Get a real `ELEVENLABS_API_KEY`, set `USE_MOCK_PROVIDERS=false` (and leave `STT_PROVIDER` at its default `elevenlabs`), click Start, grant the mic permission, speak, and confirm `transcript.partial`/`transcript.final` events arrive with real text — then flip this back to `DONE`. Deepgram remains available as a fallback (`STT_PROVIDER=deepgram` + `DEEPGRAM_API_KEY`) if the ElevenLabs live check surfaces a blocking problem.
 
 ---
 
