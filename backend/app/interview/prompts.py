@@ -84,6 +84,14 @@ def build_user_prompt(state: InterviewState, *, trigger: Trigger = "code_update"
     lines.append(state.current_code or "(no code yet)")
     lines.append("")
 
+    lines.append("Code analysis observations:")
+    if state.code_analysis_observations:
+        for observation in state.code_analysis_observations:
+            lines.append(f"  - {observation}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
     lines.append("Recent transcript:")
     if state.transcript:
         for entry in state.transcript[-10:]:

@@ -26,6 +26,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
+from app.agents.code_analyser import analyse_code
 from app.agents.interviewer import propose_interviewer_action
 from app.config import Settings, get_settings
 from app.interview.controller import InterviewController
@@ -387,6 +388,24 @@ async def interview_socket(ws: WebSocket) -> None:
                 continue
 
             if isinstance(client_event, CodeUpdateEvent):
+                # code.update only ever arrives after the extension's own
+                # debounced meaningful-change detection
+                # (extension/src/content/codeChangeDetector.ts) — no
+                # additional backend-side debouncing belongs here (Feature
+                # 09 acceptance criteria: "analysis is not triggered on
+                # every keystroke"). This guard only skips the separate,
+                # free case of the same snapshot arriving twice in a row.
+                if client_event.code != record.state.current_code:
+                    # Replace, don't accumulate: these observations
+                    # describe the *current* code snapshot, not a running
+                    # log of every past one — an ever-growing list would
+                    # tell the interviewer stale things about code that no
+                    # longer exists. Contrast with recent_interviewer_actions,
+                    # which is deliberately append-only (it exists to avoid
+                    # repeating past questions, so history is the point).
+                    record.state.code_analysis_observations = analyse_code(
+                        client_event.code, client_event.language
+                    )
                 record.state.current_code = client_event.code
                 record.state.language = client_event.language
                 record.last_seen = time.monotonic()
