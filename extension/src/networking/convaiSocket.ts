@@ -48,9 +48,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+export interface ConvaiDynamicVariables {
+  problem_title: string;
+  problem_difficulty: string;
+}
+
 export function connectConvaiSocket(
   signedUrl: string,
   createSocket: (url: string) => WebSocketLike = portSocketFactory,
+  dynamicVariables?: ConvaiDynamicVariables,
 ): ConvaiSocket {
   const ws = createSocket(signedUrl);
   const eventHandlers = new Set<(event: ConvaiEvent) => void>();
@@ -61,10 +67,18 @@ export function connectConvaiSocket(
   }
 
   ws.addEventListener("open", () => {
-    // Minimal conversation_initiation_client_data — no per-session
-    // overrides, since persona/voice/turn-taking config already live on
-    // the agent itself (spikes/elevenlabs-convai/create_agent.py).
-    ws.send(JSON.stringify({ type: "conversation_initiation_client_data" }));
+    // No per-session config overrides — persona/voice/turn-taking config
+    // already live on the agent itself
+    // (spikes/elevenlabs-convai/create_agent.py). dynamic_variables only
+    // fills the {{problem_title}}/{{problem_difficulty}} placeholders the
+    // agent's own first_message template references, so the opening line
+    // can name the actual problem instead of staying generic.
+    ws.send(
+      JSON.stringify({
+        type: "conversation_initiation_client_data",
+        ...(dynamicVariables ? { dynamic_variables: dynamicVariables } : {}),
+      }),
+    );
   });
 
   ws.addEventListener("message", (event) => {

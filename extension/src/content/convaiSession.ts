@@ -204,7 +204,10 @@ export async function startConvaiSession(): Promise<ConvaiSocket | null> {
   transcript = [];
   startConvaiProgress();
   sessionStarted = true;
-  socket = connectConvaiSocket(signedUrl);
+  socket = connectConvaiSocket(signedUrl, undefined, {
+    problem_title: problem.title,
+    problem_difficulty: problem.difficulty ?? "unspecified",
+  });
   return socket;
 }
 
