@@ -339,6 +339,183 @@ def test_persistence_repository_is_called_across_session_lifecycle(monkeypatch):
     assert calls["save_final_review"] == 1
 
 
+def test_persistence_write_failure_does_not_break_the_session(monkeypatch):
+    """Feature 16 hardening: TTS and STT both already have a
+    failure-degrades-gracefully test (test_interviewer_audio.py,
+    test_stt_provider_start_failure_degrades_gracefully above); persistence
+    didn't have the equivalent for a *write* failure (only the success-path
+    call-count test above). A repository whose writes always raise must
+    still let the interview run to completion — `_persist`/`_run_persistence`
+    are the mechanism (architecture.md §Q), this proves it end-to-end."""
+
+    class AlwaysFailsRepository:
+        async def create_session(self, session_id, problem, language, started_at):
+            raise RuntimeError("db unreachable")
+
+        async def append_event(self, session_id, event):
+            raise RuntimeError("db unreachable")
+
+        async def save_final_review(self, session_id, review):
+            raise RuntimeError("db unreachable")
+
+        async def get_session(self, session_id):
+            raise RuntimeError("db unreachable")
+
+    monkeypatch.setattr(ws_module, "get_repository", lambda settings: AlwaysFailsRepository())
+
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        assert started["type"] == "session.started"
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json({"type": "session.end"})
+        stage_event = ws.receive_json()
+        assert stage_event["stage"] == "review"
+        review_event = ws.receive_json()
+        assert review_event["type"] == "review.ready"
+
+
+def test_full_interview_happy_path_start_to_review(monkeypatch):
+    """Feature 16: TODO.md Phase 11's "full happy-path integration test:
+    start -> transcript -> code_update -> question -> hint -> end ->
+    review" — chained into one continuous real session, rather than split
+    across several smaller tests that each start fresh (as the rest of
+    this file does). The clock is monkeypatched (not real controller/state
+    fixtures) so the 30s interviewer cooldown (architecture.md §L rule 1)
+    is genuinely enforced across multiple real triggers in sequence,
+    including asserting that an immediate same-instant retrigger produces
+    silence — no existing test checks cooldown gating across more than one
+    trigger in the same session.
+
+    Stage is still advanced via a direct `record.state.stage = ...` poke
+    between triggers, the same convention every other stage-dependent test
+    in this file already uses: MockLLMProvider's canned responses are
+    stage-keyed (providers/llm/mock.py) and it never itself proposes
+    transition_stage, so nothing client-triggerable can advance the stage
+    without a real LLM — poking it directly is the documented, accepted
+    simplification, not new to this test.
+    """
+    fake_now = [1_000_000.0]
+    monkeypatch.setattr(ws_module.time, "time", lambda: fake_now[0])
+
+    calls = {"create_session": 0, "append_event": 0, "save_final_review": 0}
+
+    class FakeRepository:
+        async def create_session(self, session_id, problem, language, started_at):
+            calls["create_session"] += 1
+
+        async def append_event(self, session_id, event):
+            calls["append_event"] += 1
+
+        async def save_final_review(self, session_id, review):
+            calls["save_final_review"] += 1
+
+        async def get_session(self, session_id):
+            return None
+
+    monkeypatch.setattr(ws_module, "get_repository", lambda settings: FakeRepository())
+
+    with client.websocket_connect("/ws/interview") as ws:
+        # --- start ---
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        assert started["seq"] == 1
+        stage_event = ws.receive_json()
+        assert stage_event["stage"] == "intro"
+
+        record = ws_module.sessions.get(session_id)
+        assert record is not None
+
+        # --- code_update -> question (first-ever call always passes
+        # can_speak's cooldown gate, regardless of the clock) ---
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        question_1 = ws.receive_json()
+        assert question_1["type"] == "interviewer.transcript"
+        assert ws.receive_json()["type"] == "interviewer.audio.start"
+        assert ws.receive_json()["type"] == "interviewer.audio.end"
+
+        # --- transcript, same instant -> cooldown genuinely blocks a
+        # reply (proves the gate applies across trigger types, not just
+        # within one) ---
+        ws.send_json({"type": "dev.simulate_transcript", "text": "I'd use a hash map."})
+        assert ws.receive_json()["type"] == "transcript.partial"
+        assert ws.receive_json()["type"] == "transcript.final"
+        # No interviewer.transcript follows here. Proven by the next
+        # thing off the wire, below, being the *next* event we send, not
+        # a leftover reply to this one.
+
+        # --- advance past cooldown, move to a stage with a different
+        # canned response, and confirm this second question actually
+        # differs from the first ---
+        fake_now[0] += 31.0
+        record.state.stage = "clarification"
+        ws.send_json(
+            {
+                "type": "code.update",
+                "language": "python",
+                "code": "def f(): return 1",
+                "timestamp": fake_now[0],
+            }
+        )
+        question_2 = ws.receive_json()
+        assert question_2["type"] == "interviewer.transcript"
+        assert question_2["text"] != question_1["text"]
+        assert ws.receive_json()["type"] == "interviewer.audio.start"
+        assert ws.receive_json()["type"] == "interviewer.audio.end"
+
+        # --- hint.requested bypasses cooldown entirely (§L rule 2) —
+        # clock deliberately left unadvanced ---
+        ws.send_json({"type": "hint.requested"})
+        hint = ws.receive_json()
+        assert hint["type"] == "hint.response"
+        assert hint["level"] == 1
+        assert ws.receive_json()["type"] == "interviewer.audio.start"
+        assert ws.receive_json()["type"] == "interviewer.audio.end"
+        assert record.state.hint_level == 1
+
+        # --- advance past cooldown again, move to "complexity" so the
+        # rubric-carrying canned response fires (Feature 13) ---
+        fake_now[0] += 31.0
+        record.state.stage = "complexity"
+        ws.send_json(
+            {
+                "type": "code.update",
+                "language": "python",
+                "code": "def f(): return 2",
+                "timestamp": fake_now[0],
+            }
+        )
+        assert ws.receive_json()["type"] == "interviewer.transcript"
+        assert ws.receive_json()["type"] == "interviewer.audio.start"
+        assert ws.receive_json()["type"] == "interviewer.audio.end"
+        rubric_event = ws.receive_json()
+        assert rubric_event["type"] == "rubric.updated"
+        assert rubric_event["rubric"]["complexity"] == 1
+
+        # --- end -> review ---
+        ws.send_json({"type": "session.end"})
+        stage_event = ws.receive_json()
+        assert stage_event["type"] == "interviewer.state"
+        assert stage_event["stage"] == "review"
+        review_event = ws.receive_json()
+        assert review_event["type"] == "review.ready"
+        # schema + evidence-id validator both pass
+        FinalReview.model_validate(review_event["review"])
+
+    assert record.state.stage == "review"
+    assert calls["create_session"] == 1
+    assert calls["save_final_review"] == 1
+    assert calls["append_event"] == len(record.events)
+
+    seqs = [e["seq"] for e in record.events]
+    assert seqs == sorted(seqs)
+    assert len(set(seqs)) == len(seqs)  # every seq unique — no double-emit anywhere in the chain
+
+
 def test_code_update_triggers_the_mock_interviewer_at_intro_stage():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
