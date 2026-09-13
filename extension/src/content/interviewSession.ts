@@ -21,6 +21,14 @@ export function cacheProblemInfo(problem: ProblemInfo): void {
   cachedProblem = problem;
 }
 
+/** Exposed so content/convaiSession.ts (the ElevenLabs Conversational AI
+ * spike's parallel session module — see progress.md's "Spike" section)
+ * can reuse the same problem-detection cache instead of duplicating
+ * waitForProblemInfo() wiring in a second file. */
+export function getCachedProblemInfo(): ProblemInfo | null {
+  return cachedProblem;
+}
+
 /** Called on SPA navigation (a new problem page) so a stale cached problem can't leak into the next one. */
 export function resetInterviewSession(): void {
   cachedProblem = null;

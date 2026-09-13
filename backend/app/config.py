@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
 
+    # ElevenLabs Conversational AI (spike only — see
+    # spikes/elevenlabs-convai/README.md and progress.md's "Spike" section;
+    # not part of the real interview pipeline). The agent itself is created
+    # out-of-band by spikes/elevenlabs-convai/create_agent.py, not by this
+    # backend — this is just the id the signed-url endpoint needs.
+    elevenlabs_convai_agent_id: str | None = None
+
     # Persistence (optional — falls back to in-memory when unset)
     supabase_url: str | None = None
     supabase_service_role_key: str | None = None

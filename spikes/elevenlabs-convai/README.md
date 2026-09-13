@@ -1,9 +1,25 @@
 # SPIKE — ElevenLabs Conversational AI as the interviewer pipeline
 
 **Status: throwaway.** This is not part of the product's feature roadmap
-(`FEATURE_PROGRESS.md`) and is not wired into the real extension/backend. It
-lives entirely in this folder, on branch `worktree-spike-elevenlabs-convai`,
-so it can be deleted without touching anything real.
+(`FEATURE_PROGRESS.md`). Everything in *this folder* is a standalone,
+disconnected test page — useful for judging raw conversational feel with
+zero setup, kept so it can be deleted without touching anything real.
+
+**There is also a real, wired-in version of this pipeline**, now living
+inside the actual extension/backend (not in this folder), so it can be
+tried on a real LeetCode page with the real panel UI:
+- `extension/src/components/ConvaiInterviewPanel.tsx` and its supporting
+  `networking/convaiSocket.ts`, `media/convaiMicrophone.ts`,
+  `media/useConvaiMicrophoneCapture.ts`, `media/useConvaiAudioPlayback.ts`,
+  `state/convaiInterviewEngine.ts`, `content/convaiSession.ts`
+- `backend/app/api/convai.py`, `backend/app/providers/convai/elevenlabs.py`
+
+Build the extension with `VITE_USE_ELEVENLABS_CONVAI=true` (see
+`extension/.env.example`) to get this panel instead of the real one — see
+progress.md's "Spike" section for the full list of decisions/tradeoffs made
+wiring it in. This folder's standalone page remains useful as a
+zero-extension-rebuild way to sanity-check the agent/turn-taking config
+itself before testing the real integration.
 
 ## What this answers
 

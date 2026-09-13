@@ -2,9 +2,11 @@ import { createRoot } from "react-dom/client";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import cssText from "../styles/globals.css?inline";
 import { App } from "./App";
+import { hasActiveConvaiSession, resetConvaiSession, sendConvaiCodeUpdate } from "./convaiSession";
 import { watchCode } from "./editor";
 import { cacheProblemInfo, hasActiveInterviewSession, resetInterviewSession } from "./interviewSession";
 import { stopAllMicrophoneCapture } from "../media/microphone";
+import { stopAllConvaiMicrophoneCapture } from "../media/convaiMicrophone";
 import { releasePageSpace, reservePageSpace } from "./layout";
 import { isSupportedProblemPage, waitForProblemInfo } from "./leetcode";
 
@@ -54,19 +56,29 @@ function mount() {
   });
 
   stopWatchingCode = watchCode((snapshot) => {
-    if (!hasActiveInterviewSession()) {
+    // Both checked, not else-if: the two pipelines are mutually exclusive in
+    // practice (App.tsx mounts one or the other per VITE_USE_ELEVENLABS_CONVAI),
+    // but this keeps that assumption from silently breaking either one.
+    const real = hasActiveInterviewSession();
+    const convai = hasActiveConvaiSession();
+
+    if (real) {
+      socket.send({
+        type: "code.update",
+        language: snapshot.language,
+        code: snapshot.code,
+        timestamp: Date.now() / 1000,
+      });
+    }
+    if (convai) {
+      sendConvaiCodeUpdate(snapshot.code, snapshot.language);
+    }
+    if (!real && !convai) {
       console.debug(`${LOG_PREFIX} meaningful code change (no session yet)`, {
         language: snapshot.language,
         length: snapshot.code.length,
       });
-      return;
     }
-    socket.send({
-      type: "code.update",
-      language: snapshot.language,
-      code: snapshot.code,
-      timestamp: Date.now() / 1000,
-    });
   });
 }
 
@@ -84,8 +96,12 @@ function unmount() {
   stopWatchingCode = null;
 
   // Belt and braces: even if a future change loses the React cleanup path,
-  // teardown must never leave the mic live. Cheap and idempotent.
+  // teardown must never leave the mic live. Cheap and idempotent. Both
+  // pipelines' kill switches are called unconditionally, same reasoning as
+  // watchCode's dual check above — whichever one is actually live gets torn
+  // down, and calling the other one is a no-op.
   stopAllMicrophoneCapture();
+  stopAllConvaiMicrophoneCapture();
 }
 
 mount();
@@ -98,6 +114,7 @@ new MutationObserver(() => {
   if (window.location.pathname === lastPath) return;
   lastPath = window.location.pathname;
   resetInterviewSession();
+  resetConvaiSession();
   unmount();
   mount();
 }).observe(document.body, { childList: true, subtree: true });
