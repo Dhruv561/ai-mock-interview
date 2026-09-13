@@ -1,3 +1,10 @@
+// DEPRECATED FALLBACK (2026-09-13): this is no longer the default panel —
+// content/App.tsx renders ConvaiInterviewPanel.tsx by default and only
+// falls back to this one when VITE_USE_LEGACY_PIPELINE=true. Kept working
+// and tested (not deleted) as a reversible fallback; see architecture.md's
+// "Default interviewer pipeline" addendum for the full decision record,
+// including what the default pipeline gives up by not using this one
+// (tiered hints, live stage tracking, rubric-evidenced review).
 import { useState } from "react";
 import { endInterviewSession, startInterviewSession } from "../content/interviewSession";
 import { useInterviewerAudioPlayback } from "../media/useInterviewerAudioPlayback";

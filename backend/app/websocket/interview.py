@@ -1,4 +1,13 @@
-"""WebSocket session transport (Feature 06 — architecture.md §G), the STT
+"""DEPRECATED FALLBACK (2026-09-13): the extension's default panel
+(ConvaiInterviewPanel.tsx) no longer connects here — it talks straight to
+an ElevenLabs Conversational AI agent via /api/convai/* (api/convai.py)
+instead. This endpoint is kept working and tested, not deleted, reachable
+by building the extension with VITE_USE_LEGACY_PIPELINE=true. See
+architecture.md's "Default interviewer pipeline" addendum for the full
+decision record, including what the default pipeline gives up by not using
+this one (tiered hints, live stage tracking, rubric-evidenced review).
+
+WebSocket session transport (Feature 06 — architecture.md §G), the STT
 audio relay (Feature 05 — architecture.md §E/§H), the interview state
 machine wiring (Feature 07 — architecture.md §I), the AI interviewer
 + controller (Feature 08 — architecture.md §J/§L), and session persistence

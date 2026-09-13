@@ -513,4 +513,36 @@ Mapped 1:1 to PRD §14 scenarios and their implementation mechanism:
   - **Two earlier fixes are retained but were not the blocker** — recording this so neither gets "tidied away" later as useless:
     - The `localhost` → `127.0.0.1` pin in `networking/interviewSocket.ts`. The underlying finding was real and verified (`localhost` resolves to IPv6 `::1` first on macOS; `uvicorn --host 0.0.0.0` binds IPv4 only), and it would have produced the identical symptom, so it was plausibly a second live fault masked by the first. Keep it.
     - `http://127.0.0.1:8000/*` in `host_permissions`. Confirmed granted and active while the content script still failed, so it was not sufficient — but the service worker's socket genuinely needs it. Keep it.
+
+---
+
+## 5. Default interviewer pipeline (2026-09-13) — ElevenLabs Conversational AI, superseding §H/§J/§L/§M/§N as the default
+
+**This is a product decision, not a silent one — recorded here per CLAUDE.md's "do not silently change requirements" rule, because it genuinely conflicts with parts of PRD.md and CLAUDE.md's own project description ("provides tiered hints... produces an evidence-based final review").**
+
+### What changed
+
+The default interview pipeline is now a single hosted ElevenLabs Conversational AI agent (STT+LLM+TTS+turn-taking in one WebSocket, `extension/src/networking/convaiSocket.ts` → `backend/app/api/convai.py`), wired into the extension as `components/ConvaiInterviewPanel.tsx`, which `content/App.tsx` renders by default. It replaced the pipeline this document describes in §H (STT), §J (interviewer LLM), most of §L (the controller — its "own silence" role is now ElevenLabs' own turn-taking config), §M (TTS), and effectively all of §N (hint tiers) and most of §O (live rubric) as the thing a candidate actually talks to.
+
+This began as an explicitly throwaway comparison spike (`spikes/elevenlabs-convai/`, branch `worktree-spike-elevenlabs-convai`) requested to answer one question: does a fully-managed conversational API "know when to be quiet" well enough to be worth losing this product's own deterministic controller? After a live manual test (real LeetCode page, real mic) and one tuning pass on the agent's silence handling (`turn_timeout` raised to the 30s max, an explicit "don't check in" system-prompt instruction, `interruption_ignore_terms` for acknowledgment words), the answer was yes — promoted from spike to default.
+
+### What was NOT done
+
+**The old pipeline was not deleted.** Every file §H/§J/§K/§L/§M/§N/§O describe still exists, still passes its own tests, and is still reachable — building the extension with `VITE_USE_LEGACY_PIPELINE=true` renders `InterviewPanel.tsx` instead, talking to the real `backend/app/websocket/interview.py` exactly as before. This was an explicit choice (not a default cleanup) so the decision above is reversible without re-implementing anything, should the Convai pipeline not hold up further. Deprecation notices live at the two entry points (`InterviewPanel.tsx`'s top comment, `websocket/interview.py`'s module docstring) rather than scattered across every file in those sections — those two are the only places a reader would actually land on this pipeline.
+
+### The regression this accepts (read this before assuming feature parity)
+
+The Convai pipeline, as built, is **not** feature-equivalent to what §H–§P describe, and CLAUDE.md's own project description ("provides tiered hints... produces an evidence-based final review") is honestly weaker under it:
+
+- **No tiered hints (§N).** `content/convaiSession.ts`'s `requestConvaiHint()` sends one contextual nudge — there is no level 1/2/3 escalation, no cap enforcement, no "hints beyond level 3 are refused" rule. CLAUDE.md principle #5 ("guide rather than solve... provide graduated hints") is only honored by the agent's own prompt-level restraint, not by a deterministic gate.
+- **No live stage machine (§I is unused by this pipeline).** `ConvaiInterviewPanel.tsx` passes `stage: null` — there is no `intro → clarification → approach → coding ⇄ ... → review` tracking, and nothing enforces stage-appropriate behavior (e.g. nothing stops the agent from discussing complexity before an approach is even stated).
+- **Thinner, evidence-based review (§P still runs, on less material).** `backend/app/api/convai.py`'s `/review` endpoint does reuse the real `agents/evaluator.py` unchanged — CLAUDE.md principle #10 is still honored in mechanism — but the `InterviewState` it builds has only a client-captured transcript. No rubric history, no code-analysis observations, no hint log, no stage history exist to cite, so every review from this pipeline is evidence-poor by construction compared to one from the legacy pipeline.
+- **No code-analysis pass (§K is unused by this pipeline).** The agent sees raw code snapshots as `contextual_update` text (debounced via the existing `watchCode`), not the deterministic Python `ast` analysis §K describes.
+- **The controller's deterministic rules (§L) are gone**, replaced by the agent's own turn-taking (`turn_timeout`/`turn_eagerness`/`interruption_ignore_terms`) and prompt-level instructions. This is *more* configurable in some ways (see below) but is soft/LLM-enforced rather than the hard gate §L describes (e.g. "hints beyond level 3 are refused" was a code-level rule; its Convai equivalent is a sentence in a system prompt the model could in principle ignore).
+
+None of this is a bug in the Convai pipeline — it is a different, deliberately simpler architecture that trades the above for a materially better live conversational feel (the actual thing this was evaluated on). If any of the above ever becomes a hard requirement again, the legacy pipeline already has it, working, behind the flag above.
+
+### Other providers considered but not built
+
+Discussed as alternatives (not spiked): **OpenAI Realtime API** (`turn_detection: {type: "semantic_vad", eagerness: "low"}`, or `create_response: false` to hand turn-taking back to app-level code — the closest path to reconstructing something like §L's controller on top of a duplex model) and **Gemini Live API** (`automaticActivityDetection` with ms-level tuning, plus a `proactivity.proactive_audio` setting letting the model itself decide not to respond — the only one of the three with a built-in "don't be pushy" mechanism rather than just a longer timer). Neither was implemented; both remain options if the ElevenLabs agent's tuning doesn't hold up over more testing.
   - **Method note worth reusing:** the thing that actually cracked this was making the *backend* the observer. Chrome's own error was unreachable (the console tool does not surface content-script-origin messages, a limitation hit in two consecutive sessions), and every in-page probe is confounded because page CSP is evaluated first and always wins. Running uvicorn with `--log-level debug` and asking "did a connection attempt arrive at all?" split client-side-block from server-side-reject in one observation, and a service-worker probe then isolated the responsible variable.

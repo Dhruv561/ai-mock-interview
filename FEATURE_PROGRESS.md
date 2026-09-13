@@ -1123,3 +1123,69 @@ Dockerfile/compose verified end-to-end locally (build → run → healthy → `/
 
 ## Next action
 Add Playwright screenshots to DEPLOY.md's load-unpacked section. Separately (not this feature): wire in real Anthropic/Deepgram/ElevenLabs keys on the live deployment when the user's ready, per DEPLOY.md §5.
+
+---
+
+# Feature 21 — Default interviewer pipeline: ElevenLabs Conversational AI
+
+## Status
+IMPLEMENTED
+
+## Priority
+P0 (this is now the default candidate-facing experience)
+
+## started_at
+2026-09-13
+
+## Current task
+None — promoted from a throwaway spike (`spikes/elevenlabs-convai/`, branch `worktree-spike-elevenlabs-convai`) to the extension's default pipeline after a live manual test and one tuning pass. Not marked VERIFIED/DONE: no automated test coverage exists yet for the new files (consistent with how the spike was scoped — see Tests/checks run below), and the known feature gaps in `architecture.md` §5 are accepted, not resolved.
+
+## Acceptance criteria
+- [x] Candidate can complete a full Start → talk → code → Hint → End cycle against a real LeetCode page using the ElevenLabs Conversational AI agent instead of Deepgram/Claude/ElevenLabs-TTS
+- [x] `ELEVENLABS_API_KEY` never reaches the extension (signed-url + review both relayed server-side, `backend/app/api/convai.py`)
+- [x] Candidate's live code reaches the agent as context (`contextual_update`, debounced via the existing `watchCode`)
+- [x] A real, evidence-based `FinalReview` is still produced at session end (reuses `agents/evaluator.py` unchanged)
+- [x] The previous pipeline remains fully working, reachable via `VITE_USE_LEGACY_PIPELINE=true`, not deleted
+- [x] Manual live test performed by the user against a real LeetCode page and real mic
+- [ ] Tiered hints, live stage tracking, rubric evidence — explicitly NOT ported; accepted regression, see `architecture.md` §5
+- [ ] Automated test coverage for the new extension/backend files (none written — see Tests/checks run)
+
+## Completed
+- `backend/app/api/convai.py` (`GET /signed-url`, `POST /review`) + `backend/app/providers/convai/elevenlabs.py` — see Feature-spanning detail in `architecture.md` §5 and `progress.md`'s "Spike" section (kept there rather than duplicated here, since that section is the fuller decision record).
+- `extension/src/networking/convaiSocket.ts` — hand-rolled wire protocol (verified against `@elevenlabs/client`'s actual shipped source, not guessed), routed through the background service worker (`background/index.ts`'s port relay, unchanged) since leetcode.com's CSP blocks a content-script socket to an external host the same way it blocked the real backend WS (`architecture.md` §B.1).
+- `extension/src/media/convaiMicrophone.ts`, `useConvaiMicrophoneCapture.ts`, `useConvaiAudioPlayback.ts` — raw 16kHz PCM16 capture (Convai's wire format, not the real pipeline's WebM/Opus), mirroring `microphone.ts`'s privacy-critical single-capture invariants (architecture.md §B.2); playback reuses `interviewerAudioPlayer.ts` unchanged via a format-string translation.
+- `extension/src/state/convaiInterviewEngine.ts`, `content/convaiSession.ts` — dispatch into the same reducer/UI as the real pipeline; transcript capture for the end-of-session review.
+- `extension/src/components/ConvaiInterviewPanel.tsx` — reuses every real visual component (DockedPanel/FloatingPanel/SplitPanel/StartScreen/Review/StatusIndicator); only the wiring underneath is pipeline-specific.
+- **Bug found and fixed before the first browser test:** `convaiSession.ts` initially called `fetch()` directly from the content script for the signed-url/review calls — hits the exact same CSP wall the real WebSocket did. Fixed by relaying both through `background/index.ts` (`chrome.runtime.onMessage` handler) instead.
+- **Promoted to default (this slice):** `content/App.tsx` inverted — `ConvaiApp` renders unless `VITE_USE_LEGACY_PIPELINE=true`; `LegacyApp` (formerly `RealApp`) is the fallback. Deprecation notices added at the two entry points a reader would land on (`InterviewPanel.tsx`, `websocket/interview.py`), not scattered across every file in the old pipeline. `extension/.env.example` rewritten to document the new default and the fallback flag.
+- **Tuning pass, prompted by the first live test feeling "pushy":** agent recreated with `turn_timeout` raised 10s → 30s (the max), an explicit system-prompt instruction against "are you still there?"-style check-ins, and `interruption_ignore_terms` for acknowledgment words. See `create_agent.py`.
+
+## Remaining
+- No automated tests for any of the new Convai-specific files (`convaiSocket.ts`, `convaiMicrophone.ts`, `useConvaiMicrophoneCapture.ts`, `useConvaiAudioPlayback.ts`, `convaiInterviewEngine.ts`, `convaiSession.ts`, `ConvaiInterviewPanel.tsx`, `api/convai.py`, `providers/convai/elevenlabs.py`) — everything so far is typecheck/lint/build-clean plus manual/live verification, not unit-tested. Given this is now the default candidate-facing path (not a side spike), this is the most important remaining gap.
+- The regressions listed in `architecture.md` §5 (tiered hints, live stage, rubric evidence, code-analysis pass) are accepted, not planned — no ticket exists to close them; if any becomes a hard requirement again, revisit whether to build it into the Convai pipeline or fall back to the legacy one.
+- Silence-handling tuning is based on one round of live feedback, not a rehearsed multi-session evaluation — may need further tuning (or one of the alternatives in `architecture.md` §5's "Other providers considered" — OpenAI Realtime's `create_response: false`, Gemini Live's `proactive_audio`) if pushiness recurs.
+- `spikes/elevenlabs-convai/`'s standalone test page still exists and still works (zero-extension-rebuild sanity check for the agent config) but is now secondary to the real wired-in panel this feature describes.
+
+## Files changed
+- New: `backend/app/api/convai.py`, `backend/app/providers/convai/__init__.py`, `backend/app/providers/convai/elevenlabs.py`
+- New: `extension/src/networking/convaiSocket.ts`, `media/convaiMicrophone.ts`, `media/useConvaiMicrophoneCapture.ts`, `media/useConvaiAudioPlayback.ts`, `state/convaiInterviewEngine.ts`, `content/convaiSession.ts`, `components/ConvaiInterviewPanel.tsx`
+- Changed: `backend/app/config.py` (`elevenlabs_convai_agent_id`), `backend/app/main.py` (router registration), `backend/app/websocket/interview.py` (deprecation notice only)
+- Changed: `extension/src/content/App.tsx` (default flip), `content/index.tsx` (dual code-update/teardown wiring), `content/interviewSession.ts` (`getCachedProblemInfo` export), `background/index.ts` (REST relay), `manifest.ts` (host permission), `components/InterviewPanel.tsx` (deprecation notice only)
+- Changed: `.env.example`, `extension/.env.example`, `architecture.md` (§5, new), `progress.md` ("Spike" section), this file (new Feature 21)
+- `spikes/elevenlabs-convai/` (standalone comparison page + `create_agent.py`, unchanged in shape from the original spike, tuned in this slice)
+
+## Tests/checks run
+- Backend: `uv run pytest -q` — 204/204 pass (no change; nothing existing was touched beyond the deprecation-notice docstring). `uv run ruff check` — clean on all new/changed files.
+- Extension: `npm run typecheck` — clean. `npm run lint` — clean (one pre-existing, unrelated warning in `interviewStore.tsx` from Feature 01). `npm run test` (vitest) — 138/138 pass (no change). `npm run build` — clean, verified in both the new default mode (no env override) and with `VITE_USE_LEGACY_PIPELINE=true`.
+- Live: both `/api/convai/signed-url` and `/api/convai/review` exercised against the real ElevenLabs API and the real evaluator (mock LLM provider) before the first browser test. A real Chrome instance (fresh profile, `--load-extension`) loaded on a real `leetcode.com/problems/two-sum` page, backend running locally — user completed a live conversational test, reported the agent as "pushy" (checking in during normal thinking/typing silence), which drove the tuning pass above. No second live re-test of the tuned agent has been confirmed back to this session yet.
+
+## Verification
+Manual/live verification only, as above — no automated coverage for the new code paths themselves (see Remaining). Acceptable for a feature promoted from a spike this quickly, but this feature should not be marked VERIFIED until either automated tests are added or a rehearsed multi-session manual pass confirms the tuned silence handling holds up.
+
+## Known issues/blockers
+- See `architecture.md` §5's regression list — tiered hints, live stage tracking, rubric evidence, and code-analysis are all real, accepted gaps versus the legacy pipeline and versus CLAUDE.md's own project description, not oversights.
+- Zero automated test coverage on new files, as above.
+- Silence-tuning verdict is based on one live session before the tuning pass; not yet reconfirmed after it.
+
+## Next action
+Get the user's read on the tuned agent's silence handling (relaunch Chrome against the same backend, same LeetCode page). If it holds up, the next real gap to close is automated test coverage for the new files; if it doesn't, revisit `turn_timeout`/prompt further or spike one of the two alternative providers named in `architecture.md` §5.
