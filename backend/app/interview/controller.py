@@ -18,6 +18,11 @@ from app.interview.state import InterviewState, RubricEvidenceEntry
 # Minimum gap between interviewer utterances, unless a hint was explicitly
 # requested (§L rule 2). Named constant, not scattered magic numbers, so
 # it's easy to tune during demo rehearsal (§L risk).
+#
+# Briefly lowered to 2.0 on 2026-09-13 to iterate faster while live-testing
+# the ElevenLabs STT swap; reverted back to 30.0 afterwards — 2s made the
+# interviewer interject far more than a real interviewer would, which was
+# useful for exercising the pipeline quickly but wrong for an actual demo.
 MIN_COOLDOWN_SECONDS = 30.0
 MAX_HINT_LEVEL = 3
 RUBRIC_SCORE_MIN = 0

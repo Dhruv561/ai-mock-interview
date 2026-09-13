@@ -88,10 +88,13 @@ def test_remain_silent_is_always_accepted_and_does_not_reset_the_cooldown():
     controller, _ = make_controller()
     controller.accept_proposal(InterviewerAction(action="ask_question", message="Q1"), now=0.0)
 
-    accepted = controller.accept_proposal(InterviewerAction(action="remain_silent"), now=5.0)
+    still_within_cooldown = MIN_COOLDOWN_SECONDS / 2
+    accepted = controller.accept_proposal(
+        InterviewerAction(action="remain_silent"), now=still_within_cooldown
+    )
     assert accepted is not None
     # the earlier question's cooldown is unaffected by the silent response
-    assert controller.can_speak(now=5.0) is False
+    assert controller.can_speak(now=still_within_cooldown) is False
 
 
 def test_hints_are_capped_at_max_level():

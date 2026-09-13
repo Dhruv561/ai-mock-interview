@@ -278,7 +278,7 @@ None — feature complete.
 # Feature 05 — Microphone and speech-to-text
 
 ## Status
-IMPLEMENTED (was DONE; reopened 2026-09-13 by the ElevenLabs provider swap — see dated update at the end of this record)
+DONE (swapped default STT provider Deepgram → ElevenLabs 2026-09-13, briefly reopened to IMPLEMENTED pending a live check, now live-verified with a real key + real mic — see the dated updates at the end of this record)
 
 ## Priority
 P0
@@ -287,7 +287,7 @@ P0
 2026-09-12
 
 ## Current task
-2026-09-13: default STT provider swapped Deepgram → ElevenLabs, which forced a real change to the mic capture pipeline (WebM/Opus → raw PCM16/16kHz). Fully implemented, unit-tested, and passing the whole check.sh suite, but not yet live-verified with a real ElevenLabs key + real mic — that's the next concrete step. See the dated update below for the full record; everything above it describes the original Deepgram-based implementation and stays accurate as history except where superseded.
+Complete. Default STT provider is ElevenLabs realtime (Deepgram selectable via `STT_PROVIDER=deepgram`); live-verified end-to-end 2026-09-13 with a real key, real mic, and real speech. See the dated updates below for the full record; everything above them describes the original Deepgram-based implementation and stays accurate as history except where superseded.
 
 ## Acceptance criteria
 - [x] microphone permission flow works — `getUserMedia` requested on Start, denial/no-hardware/unsupported-browser all resolve to a status the UI shows instead of throwing
@@ -379,16 +379,35 @@ User asked to switch from Deepgram to ElevenLabs for STT. Investigated ElevenLab
 - `bash scripts/check.sh` — full sequence (both projects, incl. the secret tripwire) passes end-to-end.
 - No live browser/real-provider check this session (see Remaining).
 
-### Verification
+### Verification (superseded below)
 IMPLEMENTED, not VERIFIED/DONE. Every unit-testable and static-check surface is green (backend provider selection and message parsing, extension capture lifecycle, full check.sh). What's unverified is the same live-hardware-and-key gap this feature already had once before Deepgram was proven live: needs a real `ELEVENLABS_API_KEY`, `USE_MOCK_PROVIDERS=false`, a real mic, and a moment of actual speech.
+
+## UPDATE 2026-09-13 (later still) — live-verified with a real ElevenLabs key + real mic, flipped to DONE
+
+The user asked to fire up a live demo: backend started from this worktree (`USE_MOCK_PROVIDERS=false`, real `ELEVENLABS_API_KEY`/`ANTHROPIC_API_KEY` from the user's own `backend/.env`) and a real Chrome instance launched with the built extension loaded, on `leetcode.com/problems/two-sum`. Inspected via Chrome DevTools Protocol (a debug port on the launched Chrome, not the user's own browsing) rather than guessing from screenshots.
+
+**Confirmed genuinely working end-to-end, from the backend's own debug log, not just the UI:**
+- Mic → PCM pipeline: inbound binary WS frames are exactly 8000 bytes each (4000 samples × 2 bytes, matching the 250ms/16kHz PCM16 design) — the new `microphone.ts` capture is producing correctly-shaped audio, not garbage.
+- ElevenLabs realtime STT: real speech ("Hello, can you hear me?") produced two `transcript.partial` events converging on the right text, then one `transcript.final` with the same text — genuine STT output, not `dev.simulate_transcript` (which is hard-rejected once `USE_MOCK_PROVIDERS=false`).
+- Real Anthropic interviewer: a contextual, non-canned question about the Two Sum problem specifically (referencing "restate the problem", "input/output", "constraints" — not a generic stage line).
+- Real ElevenLabs TTS: `interviewer.audio.start`/`.end` framed around the spoken text, per the existing TTS pipeline.
+
+**One real operational hazard found and fixed, not a code defect in this feature:** a stale `uvicorn` process from an earlier session was already bound to port 8000, serving the *old* pre-swap code from the main checkout (not this worktree). The new backend failed to bind (`address already in use`) but a `curl /health` still returned 200 from the stale process, which could have made an actual demo silently exercise old code while looking fine. Caught by checking `ss -ltnp`/`pgrep` for which binary owned port 8000, not by trusting the health check alone. Worth remembering for any future "start the backend" request in this repo: check for a pre-existing process on the port first.
+
+**Also exercised live, at the user's request:** `MIN_COOLDOWN_SECONDS` (architecture.md §L, `interview/controller.py`) temporarily dropped from 30.0 to 2.0 to iterate faster while testing, then reverted back to 30.0 once confirmed — 2s made the interviewer interject far more often than a real interview would, useful for testing but wrong for an actual demo. Tests updated to derive from the constant (`MIN_COOLDOWN_SECONDS / 2`) rather than a hardcoded literal, so this kind of tuning doesn't silently break a test again.
+
+This closes the feature's last open acceptance gap (a real provider, real mic, real speech, confirmed from server-side evidence). Deepgram remains available and unaffected via `STT_PROVIDER=deepgram`.
+
+### Verification
+**DONE.** Live-verified end-to-end against real ElevenLabs STT/TTS and real Anthropic, from backend log evidence (not just UI appearance) — see above.
 
 ## Known issues/blockers
 - Same WS-endpoint auth/origin gap already tracked under Feature 06 — applies here too since audio flows over the same connection.
-- The live ElevenLabs+mic check described above, blocked by no key available in this environment, not a known code defect.
-- PCM downsample quality (nearest-neighbour) unverified against real transcription accuracy.
+- PCM downsample quality (nearest-neighbour) worked correctly for the one live phrase tested; still not stress-tested against noisier speech/accents/background noise.
+- Reconnect mid-session still doesn't recreate the STT session (pre-existing gap, tracked in `progress.md`, unrelated to this swap).
 
 ## Next action
-Get a real `ELEVENLABS_API_KEY`, set `USE_MOCK_PROVIDERS=false` (and leave `STT_PROVIDER` at its default `elevenlabs`), click Start, grant the mic permission, speak, and confirm `transcript.partial`/`transcript.final` events arrive with real text — then flip this back to `DONE`. Deepgram remains available as a fallback (`STT_PROVIDER=deepgram` + `DEEPGRAM_API_KEY`) if the ElevenLabs live check surfaces a blocking problem.
+None outstanding for this feature. Optional follow-up (not blocking): stress-test the PCM downsample with more varied real speech if transcription quality ever looks off in a real demo.
 
 ---
 
