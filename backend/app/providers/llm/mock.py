@@ -34,6 +34,11 @@ _CANNED: dict[InterviewStage, InterviewerAction] = {
     "complexity": InterviewerAction(
         action="ask_question",
         message="What's the time and space complexity of your solution?",
+        # Deterministically exercises the rubric_updates/rubric_evidence
+        # path (Feature 13) without a real Anthropic key — see mock.py's
+        # module docstring and test_websocket_interview.py.
+        rubric_updates={"complexity": 1},
+        rubric_evidence="Candidate was asked to justify time/space complexity.",
     ),
     "testing": InterviewerAction(
         action="ask_question",
@@ -46,13 +51,28 @@ _CANNED: dict[InterviewStage, InterviewerAction] = {
     "review": InterviewerAction(action="remain_silent"),
 }
 
-_HINT_RESPONSE = InterviewerAction(
-    action="give_hint",
-    message=(
-        "Think about what data structure would give you faster lookups than "
-        "scanning the list each time."
+_HINT_RESPONSES: dict[int, InterviewerAction] = {
+    1: InterviewerAction(
+        action="give_hint",
+        message=(
+            "Think about whether scanning the list again for every element is really necessary."
+        ),
     ),
-)
+    2: InterviewerAction(
+        action="give_hint",
+        message=(
+            "What data structure would give you faster lookups than scanning the list "
+            "each time?"
+        ),
+    ),
+    3: InterviewerAction(
+        action="give_hint",
+        message=(
+            "Consider storing each value you've already seen in a hash map keyed by that "
+            "value, so you can check for its complement in constant time."
+        ),
+    ),
+}
 
 
 def _extract_marker(user_prompt: str, prefix: str) -> str | None:
@@ -65,7 +85,9 @@ def _extract_marker(user_prompt: str, prefix: str) -> str | None:
 class MockLLMProvider:
     async def propose_action(self, system_prompt: str, user_prompt: str) -> InterviewerAction:
         if _extract_marker(user_prompt, "Trigger: ") == "hint_requested":
-            return _HINT_RESPONSE
+            level_marker = _extract_marker(user_prompt, "Hint level requested: ")
+            level = int(level_marker) if level_marker else 1
+            return _HINT_RESPONSES.get(level, _HINT_RESPONSES[3])
 
         stage = _extract_marker(user_prompt, "Stage: ")
         if stage in _CANNED:

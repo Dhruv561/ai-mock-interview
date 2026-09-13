@@ -1,5 +1,11 @@
 from app.interview.actions import InterviewerAction
-from app.interview.controller import MAX_HINT_LEVEL, MIN_COOLDOWN_SECONDS, InterviewController
+from app.interview.controller import (
+    MAX_HINT_LEVEL,
+    MIN_COOLDOWN_SECONDS,
+    RUBRIC_SCORE_MAX,
+    RUBRIC_SCORE_MIN,
+    InterviewController,
+)
 from app.interview.state import InterviewState
 
 PROBLEM = {
@@ -141,3 +147,123 @@ def test_stage_transition_without_a_message_does_not_reset_the_cooldown():
         InterviewerAction(action="transition_stage", stage_transition="clarification"), now=0.0
     )
     assert controller.can_speak(now=1.0) is True
+
+
+# --- rubric_updates (Feature 13, architecture.md §O) ---
+
+
+def test_rubric_updates_on_ask_question_are_merged_into_state_rubric():
+    controller, state = make_controller()
+    controller.accept_proposal(
+        InterviewerAction(
+            action="ask_question",
+            message="What test cases would you run?",
+            rubric_updates={"testing": 2},
+            rubric_evidence="Candidate proposed edge-case tests unprompted.",
+        ),
+        now=0.0,
+    )
+    assert state.rubric["testing"] == 2
+    # every other category is untouched — a merge, not a replace
+    assert state.rubric["approach"] == 0
+    assert state.rubric["clarifying"] == 0
+
+
+def test_rubric_updates_on_give_hint_are_applied():
+    controller, state = make_controller()
+    controller.accept_proposal(
+        InterviewerAction(
+            action="give_hint",
+            message="Think about hash maps.",
+            rubric_updates={"approach": 1},
+            rubric_evidence="Candidate needed a hint to move past brute force.",
+        ),
+        now=0.0,
+    )
+    assert state.rubric["approach"] == 1
+
+
+def test_rubric_updates_on_transition_stage_are_applied():
+    controller, state = make_controller(stage="intro")
+    controller.accept_proposal(
+        InterviewerAction(
+            action="transition_stage",
+            stage_transition="clarification",
+            rubric_updates={"clarifying": 1},
+            rubric_evidence="Candidate asked a relevant clarifying question.",
+        ),
+        now=0.0,
+    )
+    assert state.rubric["clarifying"] == 1
+
+
+def test_rubric_updates_are_clamped_to_valid_range():
+    controller, state = make_controller()
+    controller.accept_proposal(
+        InterviewerAction(
+            action="ask_question",
+            message="Q1",
+            rubric_updates={"testing": 99, "approach": -5},
+            rubric_evidence="out-of-range values must be clamped",
+        ),
+        now=0.0,
+    )
+    assert state.rubric["testing"] == RUBRIC_SCORE_MAX
+    assert state.rubric["approach"] == RUBRIC_SCORE_MIN
+
+
+def test_rubric_updates_accumulate_an_append_only_evidence_history():
+    controller, state = make_controller()
+    controller.accept_proposal(
+        InterviewerAction(
+            action="ask_question",
+            message="Q1",
+            rubric_updates={"testing": 1},
+            rubric_evidence="first observation",
+        ),
+        now=10.0,
+    )
+    controller.accept_proposal(
+        InterviewerAction(
+            action="ask_question",
+            message="Q2",
+            rubric_updates={"testing": 2, "approach": 1},
+            rubric_evidence="second observation",
+        ),
+        now=MIN_COOLDOWN_SECONDS + 10.0,
+    )
+
+    assert len(state.rubric_history) == 2
+    first, second = state.rubric_history
+    assert first.categories == {"testing": 1}
+    assert first.evidence == "first observation"
+    assert first.timestamp == 10.0
+    assert second.categories == {"testing": 2, "approach": 1}
+    assert second.evidence == "second observation"
+    assert second.timestamp == MIN_COOLDOWN_SECONDS + 10.0
+
+    # queryable by category — every entry that touched "testing"
+    testing_entries = [entry for entry in state.rubric_history if "testing" in entry.categories]
+    assert len(testing_entries) == 2
+
+
+def test_no_rubric_updates_means_no_history_entry():
+    controller, state = make_controller()
+    controller.accept_proposal(InterviewerAction(action="ask_question", message="Q1"), now=0.0)
+    assert state.rubric_history == []
+
+
+def test_rejected_proposal_does_not_apply_rubric_updates():
+    controller, state = make_controller(stage="intro")
+    accepted = controller.accept_proposal(
+        InterviewerAction(
+            action="transition_stage",
+            stage_transition="coding",  # illegal from intro
+            rubric_updates={"approach": 3},
+            rubric_evidence="should never be applied",
+        ),
+        now=0.0,
+    )
+    assert accepted is None
+    assert state.rubric["approach"] == 0
+    assert state.rubric_history == []

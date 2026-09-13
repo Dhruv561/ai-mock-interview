@@ -32,4 +32,4 @@ tmp/
 temp/
 
 # Generated recordings
-recordings/
+recordings/.claude/worktrees/

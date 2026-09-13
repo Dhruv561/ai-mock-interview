@@ -43,6 +43,7 @@ from app.interview.schemas import (
     InterviewerStateEvent,
     InterviewerTranscriptEvent,
     ProblemInfo,
+    RubricUpdatedEvent,
     SessionEndEvent,
     SessionResumeEvent,
     SessionStartedEvent,
@@ -65,6 +66,12 @@ router = APIRouter()
 # for a hackathon deployment (documented limitation, §Q).
 SESSION_GRACE_SECONDS = 5 * 60
 RING_BUFFER_SIZE = 200
+
+# Action types whose accepted proposal can carry rubric_updates
+# (architecture.md §O) — everything except remain_silent, which never
+# scores anything. Checked once, generically, rather than duplicating the
+# rubric_updates check across each of _maybe_speak's three branches below.
+_RUBRIC_CARRYING_ACTIONS = frozenset({"ask_question", "give_hint", "transition_stage"})
 
 
 @dataclass
@@ -237,6 +244,19 @@ async def _maybe_speak(
             transcript_event = InterviewerTranscriptEvent(seq=0, text=accepted.message)
             await _emit(record, transcript_event.model_dump())
             await _speak_audio(record, settings, accepted.message)
+
+    # Rubric updates ride along with an already-gated, accepted action —
+    # they never get a second, separate trigger of their own (that's what
+    # keeps them "not excessively noisy", architecture.md §O risk note).
+    # `record.state.rubric` is already updated by this point (controller.
+    # accept_proposal applies it before returning), so this always sends
+    # the full current rubric, not just the delta — matching
+    # RubricUpdatedEvent's schema shape.
+    if accepted.action in _RUBRIC_CARRYING_ACTIONS and accepted.rubric_updates:
+        rubric_event = RubricUpdatedEvent(
+            seq=0, rubric=record.state.rubric, evidence=accepted.rubric_evidence or ""
+        )
+        await _emit(record, rubric_event.model_dump())
 
 
 def _make_transcript_callbacks(session_id: str, settings: Settings):

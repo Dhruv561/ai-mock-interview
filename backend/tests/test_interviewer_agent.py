@@ -31,3 +31,17 @@ async def test_hint_requested_trigger_produces_a_hint_regardless_of_stage():
     action = await propose_interviewer_action(state, MockLLMProvider(), trigger="hint_requested")
     assert action.action == "give_hint"
     assert action.message
+
+
+async def test_hint_responses_differ_by_requested_level():
+    provider = MockLLMProvider()
+    messages = []
+    for level in range(3):
+        state = InterviewState(problem=PROBLEM, language="python")
+        state.hint_level = level  # about to request level `level + 1`
+        action = await propose_interviewer_action(state, provider, trigger="hint_requested")
+        assert action.action == "give_hint"
+        assert action.message
+        messages.append(action.message)
+
+    assert len(set(messages)) == 3  # levels 1, 2, 3 are all distinct

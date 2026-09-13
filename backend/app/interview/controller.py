@@ -13,13 +13,15 @@ from __future__ import annotations
 import re
 
 from app.interview.actions import InterviewerAction
-from app.interview.state import InterviewState
+from app.interview.state import InterviewState, RubricEvidenceEntry
 
 # Minimum gap between interviewer utterances, unless a hint was explicitly
 # requested (§L rule 2). Named constant, not scattered magic numbers, so
 # it's easy to tune during demo rehearsal (§L risk).
 MIN_COOLDOWN_SECONDS = 30.0
 MAX_HINT_LEVEL = 3
+RUBRIC_SCORE_MIN = 0
+RUBRIC_SCORE_MAX = 3
 
 
 def _fingerprint(text: str) -> str:
@@ -64,6 +66,7 @@ class InterviewController:
                 return None
             self._asked_fingerprints.add(fingerprint)
             self._last_spoke_at = now
+            self._apply_rubric_updates(action, now=now)
             return action
 
         if action.action == "give_hint":
@@ -72,6 +75,7 @@ class InterviewController:
             self.state.hint_level += 1
             if action.message:
                 self._last_spoke_at = now
+            self._apply_rubric_updates(action, now=now)
             return action
 
         if action.action == "transition_stage":
@@ -82,9 +86,32 @@ class InterviewController:
             self.state.transition_to(action.stage_transition)
             if action.message:
                 self._last_spoke_at = now
+            self._apply_rubric_updates(action, now=now)
             return action
 
         if action.action == "remain_silent":
             return action
 
         return None
+
+    def _apply_rubric_updates(self, action: InterviewerAction, *, now: float) -> None:
+        """Merges a proposal's rubric_updates into state.rubric (clamped to
+        [0,3]) and appends an evidence-history entry (architecture.md §O).
+        Only called from branches above that already passed can_speak/
+        accept_proposal's gating — rubric updates deliberately have no
+        separate trigger of their own, which is what keeps them from being
+        noisy (§O risk note), so there is nothing further to gate here."""
+        if not action.rubric_updates:
+            return
+        clamped = {
+            category: max(RUBRIC_SCORE_MIN, min(RUBRIC_SCORE_MAX, value))
+            for category, value in action.rubric_updates.items()
+        }
+        self.state.rubric.update(clamped)
+        self.state.rubric_history.append(
+            RubricEvidenceEntry(
+                categories=clamped,
+                evidence=action.rubric_evidence or "",
+                timestamp=now,
+            )
+        )
