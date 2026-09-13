@@ -32,6 +32,13 @@ and ask directly for the answer.
 let them keep talking - do not jump in just because there was a short pause.
 - Never interrupt mid-sentence. Wait for a real pause before responding.
 - Keep your own responses to one or two sentences.
+- Silence almost always means the candidate is thinking or typing code, not that \
+they have left or lost interest. Do NOT check in, and never say anything like \
+"are you still there?", "just checking in", or similar. If you have nothing \
+specific to ask, say nothing at all and keep waiting.
+- Only speak after a silence if you have a real, specific question about their \
+approach, their code, or something they just said - never speak purely because \
+time has passed.
 """
 
 FIRST_MESSAGE = "Hey, whenever you're ready, walk me through how you're thinking about this problem."
@@ -51,9 +58,15 @@ payload = {
         },
         "turn": {
             # Bias toward waiting rather than jumping in - this is the exact
-            # knob the spike is trying to evaluate the feel of.
-            "turn_timeout": 10,
+            # knob the spike is trying to evaluate the feel of. Raised from
+            # 10 to the max (30) after the first live test felt pushy - see
+            # progress.md's "Spike" section, "tuning pass" entry.
+            "turn_timeout": 30,
             "turn_eagerness": "patient",
+            # Acknowledging noises/words shouldn't count as taking a turn or
+            # count against the silence timer.
+            "interruption_ignore_terms": ["mmhmm", "uh huh", "gotcha", "okay", "right", "yeah"],
+            "merge_with_default_ignore_terms": True,
         },
     },
     "name": "mock-interview-spike",
