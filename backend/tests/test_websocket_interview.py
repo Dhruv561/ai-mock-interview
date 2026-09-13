@@ -224,6 +224,52 @@ def test_code_update_and_hint_requested_persist_into_session_state():
     assert record.state.hint_level == 2
 
 
+def test_code_update_populates_code_analysis_observations():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        nested_loop_code = (
+            "def brute_force(nums):\n"
+            "    for i in range(len(nums)):\n"
+            "        for j in range(len(nums)):\n"
+            "            pass\n"
+        )
+        ws.send_json(
+            {
+                "type": "code.update",
+                "language": "python",
+                "code": nested_loop_code,
+                "timestamp": 1.0,
+            }
+        )
+        ws.receive_json()  # interviewer.transcript (Feature 08's mock interviewer)
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.state.code_analysis_observations
+    assert any("nested loop" in o.lower() for o in record.state.code_analysis_observations)
+
+
+def test_code_update_with_non_python_language_yields_no_observations():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "cpp"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json(
+            {"type": "code.update", "language": "cpp", "code": "int main() {}", "timestamp": 1.0}
+        )
+        ws.receive_json()  # interviewer.transcript
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.state.code_analysis_observations == []
+
+
 def test_session_end_transitions_to_review_and_is_idempotent():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})

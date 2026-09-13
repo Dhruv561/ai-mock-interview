@@ -54,3 +54,20 @@ def test_user_prompt_lists_already_asked_actions_to_avoid_repetition():
     prompt = build_user_prompt(state)
 
     assert "What is the time complexity?" in prompt
+
+
+def test_user_prompt_shows_placeholder_when_no_code_analysis_observations():
+    state = InterviewState(problem=PROBLEM, language="python")
+    prompt = build_user_prompt(state)
+    assert "Code analysis observations:" in prompt
+    assert "(none)" in prompt
+
+
+def test_user_prompt_includes_code_analysis_observations():
+    state = InterviewState(problem=PROBLEM, language="python")
+    state.code_analysis_observations.append("Nested loop detected (outer loop at line 2).")
+
+    prompt = build_user_prompt(state)
+
+    assert "Code analysis observations:" in prompt
+    assert "Nested loop detected (outer loop at line 2)." in prompt
