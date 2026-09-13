@@ -777,10 +777,16 @@ Whenever a real `ANTHROPIC_API_KEY` is available: run a real interview, confirm 
 # Feature 14 — End interview and review
 
 ## Status
-PLANNED
+IN_PROGRESS
 
 ## Priority
 P0
+
+## started_at
+2026-09-13
+
+## Current task
+Building in two parallel slices: (1) backend `agents/evaluator.py` (evidence-grounded review generation from `InterviewState`, reject/retry-once on an invalid evidence citation, wired into `session.end`); (2) extension `Review.tsx`/`state/` wiring to the real `review.ready` event, replacing `mockEngine.ts`'s hardcoded placeholder. Both build against the `FinalReview`/`ReviewPoint`/`EvidenceItem` contract already committed ahead of time in `schemas.py`/`shared/events.ts`.
 
 ## Acceptance criteria
 - [ ] interview can end cleanly
@@ -792,13 +798,13 @@ P0
 - [ ] final UI matches product style
 
 ## Completed
-- None yet.
+- `FinalReview`/`ReviewPoint`/`EvidenceItem` schema (`backend/app/interview/schemas.py`, `shared/events.ts`), with a cross-field validator (Pydantic `model_validator` / Zod `.refine`) rejecting any review whose `evidence_ids` don't resolve into its own `evidence` list.
 
 ## Remaining
-- All implementation work.
+- Backend evaluator + wiring, frontend Review.tsx wiring (in progress).
 
 ## Next action
-Build final review data model and UI using mocked evidence first.
+Merge both slices, run full backend + extension test/typecheck/lint/build, update this record.
 
 ---
 
