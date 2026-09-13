@@ -41,7 +41,17 @@ approach, their code, or something they just said - never speak purely because \
 time has passed.
 """
 
-FIRST_MESSAGE = "Hey, whenever you're ready, walk me through how you're thinking about this problem."
+# {{problem_title}} is filled from the dynamic_variables sent in
+# conversation_initiation_client_data (extension/src/networking/convaiSocket.ts) —
+# keep this in sync with update_agent.py's FIRST_MESSAGE, which is what
+# actually patches the live agent day-to-day; this only matters if the agent
+# is ever recreated from scratch.
+FIRST_MESSAGE = (
+    "Hi, I'm your interviewer today. Let's start with the problem in front of "
+    "you — {{problem_title}}. Your goal is to talk me through your "
+    "approach and code a working solution while explaining your thinking as "
+    "you go. Whenever you're ready, go ahead."
+)
 
 payload = {
     "conversation_config": {

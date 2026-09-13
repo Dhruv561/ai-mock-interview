@@ -92,7 +92,10 @@ export async function startConvaiSession(): Promise<ConvaiSocket | null> {
   sessionStartedAt = Date.now() / 1000;
   transcript = [];
   sessionStarted = true;
-  socket = connectConvaiSocket(signedUrl);
+  socket = connectConvaiSocket(signedUrl, undefined, {
+    problem_title: problem.title,
+    problem_difficulty: problem.difficulty ?? "unspecified",
+  });
   return socket;
 }
 
