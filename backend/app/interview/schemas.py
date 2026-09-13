@@ -32,7 +32,7 @@ See architecture.md §G for the full note.
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 Difficulty = Literal["Easy", "Medium", "Hard"]
 
@@ -75,12 +75,58 @@ class TimelineEvent(BaseModel):
     elapsed_seconds: float
 
 
+EvidenceKind = Literal["transcript", "code_analysis", "hint", "rubric", "stage"]
+
+
+class EvidenceItem(BaseModel):
+    """One traceable fact from the interview record (Feature 14 /
+    architecture.md §P) — the only material the evaluator prompt is allowed
+    to draw on. `id` is what a ReviewPoint.evidence_ids entry points at;
+    `text` is a short, human-readable rendering of the underlying record
+    (a quoted transcript line, a hint's text, a code-analysis observation,
+    a rubric change with its own evidence string, or a stage transition) —
+    not a database row, so the evaluator and the post-hoc verification pass
+    both work off plain strings, no separate lookup needed."""
+
+    id: str
+    kind: EvidenceKind
+    text: str
+
+
+class ReviewPoint(BaseModel):
+    """One strength or area-to-improve bullet. `evidence_ids` must be
+    non-empty and every id must exist in the enclosing FinalReview.evidence
+    list — CLAUDE.md §10 ("evidence-based final feedback") and
+    architecture.md §P forbid a generic claim with no traceable cause, and
+    this is what makes that schema-checkable rather than just prompted-for."""
+
+    text: str
+    evidence_ids: list[str] = Field(min_length=1)
+
+
 class FinalReview(BaseModel):
     overall_score: float
     rubric: dict[RubricCategory, int]
-    strengths: list[str]
-    areas_to_improve: list[str]
+    strengths: list[ReviewPoint]
+    areas_to_improve: list[ReviewPoint]
     timeline: list[TimelineEvent]
+    evidence: list[EvidenceItem]
+
+    @model_validator(mode="after")
+    def _evidence_ids_must_resolve(self) -> "FinalReview":
+        """Schema-level half of architecture.md §P's "lightly verify every
+        cited evidence id actually exists" check — this catches a
+        dangling/invented id at construction time; evaluator.py still owns
+        the reject-and-retry-once behaviour, since a validator can only
+        raise, not re-ask the LLM."""
+        known_ids = {item.id for item in self.evidence}
+        for point in (*self.strengths, *self.areas_to_improve):
+            unknown = [eid for eid in point.evidence_ids if eid not in known_ids]
+            if unknown:
+                raise ValueError(
+                    f"ReviewPoint {point.text!r} cites unknown evidence id(s): {unknown}"
+                )
+        return self
 
 
 # --- Client -> server events ---

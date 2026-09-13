@@ -58,13 +58,51 @@ export const timelineEventSchema = z.object({
   elapsed_seconds: z.number(),
 });
 
-export const finalReviewSchema = z.object({
-  overall_score: z.number(),
-  rubric: z.record(rubricCategorySchema, z.number()),
-  strengths: z.array(z.string()),
-  areas_to_improve: z.array(z.string()),
-  timeline: z.array(timelineEventSchema),
+export const evidenceKindSchema = z.enum([
+  "transcript",
+  "code_analysis",
+  "hint",
+  "rubric",
+  "stage",
+]);
+
+// One traceable fact from the interview record (Feature 14 /
+// architecture.md §P) — the only material the evaluator prompt is allowed
+// to draw on, and what a reviewPointSchema.evidence_ids entry points at.
+export const evidenceItemSchema = z.object({
+  id: z.string(),
+  kind: evidenceKindSchema,
+  text: z.string(),
 });
+
+// One strength/area-to-improve bullet. evidence_ids must be non-empty and
+// (checked by finalReviewSchema below, not locally — it needs the sibling
+// evidence list) every id must exist in the enclosing FinalReview.evidence.
+export const reviewPointSchema = z.object({
+  text: z.string(),
+  evidence_ids: z.array(z.string()).min(1),
+});
+
+export const finalReviewSchema = z
+  .object({
+    overall_score: z.number(),
+    rubric: z.record(rubricCategorySchema, z.number()),
+    strengths: z.array(reviewPointSchema),
+    areas_to_improve: z.array(reviewPointSchema),
+    timeline: z.array(timelineEventSchema),
+    evidence: z.array(evidenceItemSchema),
+  })
+  // Mirrors backend/app/interview/schemas.py's FinalReview._evidence_ids_must_resolve
+  // — every cited evidence_ids entry must resolve to a real evidence.id.
+  .refine(
+    (review) => {
+      const knownIds = new Set(review.evidence.map((item) => item.id));
+      return [...review.strengths, ...review.areas_to_improve].every((point) =>
+        point.evidence_ids.every((id) => knownIds.has(id)),
+      );
+    },
+    { message: "ReviewPoint cites an evidence id not present in FinalReview.evidence" },
+  );
 
 // --- Client -> server events ---
 
