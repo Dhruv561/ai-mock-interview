@@ -71,6 +71,7 @@ class SessionRecord:
     seq: int = 0
     events: deque[dict] = field(default_factory=lambda: deque(maxlen=RING_BUFFER_SIZE))
     last_seen: float = field(default_factory=time.monotonic)
+    created_at: float = field(default_factory=time.monotonic)
     # The connection currently allowed to receive live sends for this
     # session — reassigned on session.start and on every session.resume, so
     # server-initiated events (e.g. STT callbacks firing later, off a
@@ -109,6 +110,23 @@ class SessionRegistry:
             return None
         return record
 
+    def remove(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
+
+    def active_count(self) -> int:
+        """Count of sessions not yet past their grace window — purges
+        expired entries first so a cap check never counts sessions nobody
+        can resume anymore."""
+        now = time.monotonic()
+        expired = [
+            sid
+            for sid, record in self._sessions.items()
+            if now - record.last_seen > SESSION_GRACE_SECONDS
+        ]
+        for sid in expired:
+            del self._sessions[sid]
+        return len(self._sessions)
+
 
 sessions = SessionRegistry()
 
@@ -133,6 +151,43 @@ async def _emit(record: SessionRecord, event: dict) -> None:
 async def _send_error(ws: WebSocket, seq: int, code: str, message: str, recoverable: bool) -> None:
     event = ErrorEvent(seq=seq, code=code, message=message, recoverable=recoverable)
     await ws.send_json(event.model_dump())
+
+
+def _is_authorized(ws: WebSocket, settings: Settings) -> bool:
+    """No secrets configured (the default) means auth is off — this is a
+    deployment-only safeguard (Feature 17), not something local dev should
+    ever need to think about."""
+    allowed = settings.session_shared_secrets_list
+    if not allowed:
+        return True
+    return ws.query_params.get("token") in allowed
+
+
+def _duration_exceeded(record: SessionRecord, settings: Settings) -> bool:
+    limit = settings.session_max_duration_seconds
+    if limit <= 0:
+        return False
+    return time.monotonic() - record.created_at > limit
+
+
+async def _force_end_for_time_limit(ws: WebSocket, record: SessionRecord) -> None:
+    """Mirrors SessionEndEvent's cleanup (close STT, move to review) plus an
+    explicit, non-recoverable error so the client knows *why* the session
+    ended rather than reading it as a dropped connection, then closes the
+    socket and forgets the session — it must not be resumable past its own
+    hard limit."""
+    if record.stt_session is not None:
+        await record.stt_session.close()
+        record.stt_session = None
+    if record.state.stage != "review":
+        record.state.transition_to("review")
+        stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
+        await _emit(record, stage_event.model_dump())
+    await _send_error(
+        ws, 0, "session_time_limit", "Session ended: maximum duration reached.", False
+    )
+    sessions.remove(record.session_id)
+    await ws.close()
 
 
 async def _maybe_speak(
@@ -208,15 +263,28 @@ def _make_transcript_callbacks(session_id: str, settings: Settings):
 
 @router.websocket("/ws/interview")
 async def interview_socket(ws: WebSocket) -> None:
+    settings = get_settings()
+    if not _is_authorized(ws, settings):
+        # Rejected before accept() — an unauthorized client never completes
+        # the handshake, so it can't hold a connection open or trigger any
+        # session-creation work at all. 4401 is an app-defined close code in
+        # the 4000-4999 (private use) range; there is no standard WS code
+        # for "unauthorized".
+        await ws.close(code=4401)
+        return
+
     await ws.accept()
     record: SessionRecord | None = None
-    settings = get_settings()
 
     try:
         while True:
             message = await ws.receive()
 
             if message["type"] == "websocket.disconnect":
+                return
+
+            if record is not None and _duration_exceeded(record, settings):
+                await _force_end_for_time_limit(ws, record)
                 return
 
             if message.get("bytes") is not None:
@@ -275,6 +343,12 @@ async def interview_socket(ws: WebSocket) -> None:
                 continue
 
             if isinstance(client_event, SessionStartEvent):
+                cap = settings.max_concurrent_sessions
+                if cap > 0 and sessions.active_count() >= cap:
+                    message_text = "Interview capacity reached; try again shortly."
+                    await _send_error(ws, 0, "capacity_reached", message_text, True)
+                    continue
+
                 record = sessions.create(client_event.problem, client_event.language)
                 record.active_ws = ws
                 on_partial, on_final = _make_transcript_callbacks(record.session_id, settings)

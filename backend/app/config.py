@@ -37,9 +37,35 @@ class Settings(BaseSettings):
     app_env: str = "local"
     use_mock_providers: bool = True
 
+    # --- Deployment-only safeguards (Feature 17) ---
+    # All three default to "off" so local dev (and the existing test suite)
+    # behave exactly as before. They only need setting once the backend is
+    # reachable from somewhere other than the developer's own machine — see
+    # DEPLOY.md.
+    #
+    # Comma-separated shared secrets. A WebSocket connection must supply one
+    # of these as `?token=` to be accepted at all (checked before `accept()`
+    # in websocket/interview.py). Empty (default) disables the check
+    # entirely. Multiple values let different teams/judges get their own
+    # code without sharing one secret.
+    session_shared_secrets: str = ""
+    # Hard cap on concurrent live sessions — the real cost driver is
+    # concurrent-sessions × duration, not request volume, so this (not a
+    # request-rate limiter) is what actually bounds worst-case provider
+    # spend. 0 disables the cap.
+    max_concurrent_sessions: int = 0
+    # Force-ends any session that runs past this many seconds, independent
+    # of client behaviour (a forgotten/abandoned tab can't bill forever).
+    # 0 disables the cap.
+    session_max_duration_seconds: int = 0
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def session_shared_secrets_list(self) -> list[str]:
+        return [token.strip() for token in self.session_shared_secrets.split(",") if token.strip()]
 
 
 @lru_cache

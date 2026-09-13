@@ -774,48 +774,58 @@ P1
 2026-09-13
 
 ## Current task
-Docker image, docker-compose, and GHCR publish workflow done and verified; DEPLOY.md (load-unpacked steps + screenshots) and a deployment-auth gate are the remaining slices, not yet started.
+Docker image, docker-compose, GHCR publish workflow, and the judges-only auth + rate-limit gate are all done and verified. DEPLOY.md (load-unpacked steps + screenshots, plus documenting the chosen hosting target) is the one remaining slice.
 
 ## Acceptance criteria
 - [x] backend has a Dockerfile producing a working image
 - [x] `docker compose up` runs the backend locally against `backend/.env`
 - [x] image excludes secrets/dev-only files (`.dockerignore`)
 - [x] GitHub Actions builds and pushes the image to GHCR on push to `main`
+- [x] a minimal auth gate exists before the backend is exposed publicly (shared-secret query-param token)
+- [x] a rate/cost-limiting gate exists (concurrent-session cap + max session duration)
 - [ ] DEPLOY.md documents the load-unpacked extension flow with screenshots
 - [ ] DEPLOY.md documents at least one hosted-backend path (VPS/Cloud Run/etc.)
-- [ ] a minimal auth gate exists before the backend is exposed publicly (decision pending — see Known issues)
 
 ## Completed
 - `backend/Dockerfile`: two-stage build (`builder` resolves deps via `uv sync --frozen` from `pyproject.toml`/`uv.lock`, `runtime` is a slim non-root image with just the venv + `app/`). No dev dependencies (pytest/ruff) or tests ship in the image.
 - `backend/.dockerignore`: excludes `.env*` (secrets never enter the build context), `.venv`, caches, `tests/`.
 - `docker-compose.yml` (repo root): single `backend` service, builds from `./backend`, `env_file: backend/.env`, publishes 8000, `HEALTHCHECK` against `/health`.
 - `.github/workflows/docker-publish.yml`: on push to `main` touching `backend/**` (or manual dispatch), builds `backend/Dockerfile` with Buildx and pushes `ghcr.io/<owner>/<repo>-backend:latest` + `:sha-<short>` using the automatic `GITHUB_TOKEN` (no secret to configure) and GHA layer caching. Image name is lowercased explicitly (GHCR rejects the mixed-case owner as-is).
+- **Judges-only auth** (`app/config.py`, `app/websocket/interview.py`): `SESSION_SHARED_SECRETS` (comma-separated join codes). `_is_authorized()` checks `?token=` against the list *before* `ws.accept()` — an unauthorized client never completes the handshake (closed with app-defined code 4401), so it can't hold a connection open or trigger any session-creation work. Empty (default) disables the check entirely — no behaviour change for local dev or the existing suite.
+- **Concurrent-session cap** (`MAX_CONCURRENT_SESSIONS`): `SessionRegistry.active_count()` purges expired entries then counts live ones; checked on `session.start` only (not `session.resume`, which reuses an existing record) — rejects with a recoverable `capacity_reached` error once full. 0 (default) = unlimited.
+- **Max session duration** (`SESSION_MAX_DURATION_SECONDS`): `SessionRecord.created_at` + `_duration_exceeded()`, checked on every inbound message once a session exists. Past the limit, `_force_end_for_time_limit()` mirrors `session.end`'s cleanup (closes STT, transitions to `review`), sends a non-recoverable `session_time_limit` error, deletes the session from the registry (not resumable past its own hard cap), and closes the socket. 0 (default) = unlimited.
+- **Extension wiring** (`extension/src/networking/interviewSocket.ts`): `VITE_BACKEND_WS_TOKEN` (build-time, `extension/.env.example`) is appended as `?token=` on the WS connect URL — the only place it can go, since a browser `WebSocket()` can't set custom handshake headers. Documented as a deliberate, narrow exception to CLAUDE.md §7 (it's a judges' join code, not a provider credential).
+- `.env.example` / `extension/.env.example` / `architecture.md` §T + §U updated for all of the above.
 
 ## Remaining
 - DEPLOY.md with load-unpacked screenshots (Playwright) — not started.
-- Decide and implement the judges-only auth approach (shared-secret query-param token was the recommendation; not yet built) before any hosted deploy goes live, since the backend currently has zero auth/origin checking (see architecture.md §Q framing — acceptable for a laptop-local demo, not for a publicly reachable URL).
-- Document the chosen hosting target (VPS/Cloud Run/etc., still undecided by the user) in DEPLOY.md once picked.
+- Document the chosen hosting target (VPS vs. Cloud Run vs. other, still undecided by the user) in DEPLOY.md once picked.
 - First real GHCR push hasn't happened yet — workflow is untested on GitHub itself (Actions requires the commit to actually land on `main`); Dockerfile/compose were verified locally instead (see Tests/checks run).
 
 ## Files changed
-- `backend/Dockerfile` (new)
-- `backend/.dockerignore` (new)
-- `docker-compose.yml` (new)
-- `.github/workflows/docker-publish.yml` (new)
+- `backend/Dockerfile`, `backend/.dockerignore`, `docker-compose.yml`, `.github/workflows/docker-publish.yml` (new, prior slice)
+- `backend/app/config.py` — `session_shared_secrets(_list)`, `max_concurrent_sessions`, `session_max_duration_seconds`
+- `backend/app/websocket/interview.py` — `_is_authorized`, `_duration_exceeded`, `_force_end_for_time_limit`, `SessionRegistry.active_count`/`remove`, `SessionRecord.created_at`, capacity check in `session.start`, auth check + duration check wired into `interview_socket`
+- `backend/tests/test_session_auth_and_limits.py` (new) — 7 tests covering auth accept/reject (single + multi-secret), capacity cap vs. resume, forced end past the duration cap
+- `extension/src/networking/interviewSocket.ts` — `backendWsUrl()` appends `?token=` from `VITE_BACKEND_WS_TOKEN`
+- `.env.example`, `extension/.env.example`, `architecture.md` (§T, §U)
 
 ## Tests/checks run
 - `docker build ./backend` — pass, image builds cleanly with locked deps.
 - `docker run` the built image with `USE_MOCK_PROVIDERS=true` — `/health` returns `{"status":"ok",...}`; container `HEALTHCHECK` reports `healthy`.
 - `docker compose up` (against a throwaway `.env` copied from `.env.example`, on a non-default host port to avoid colliding with the user's already-running dev backend on :8000) — container starts, `/health` reachable through the mapped port.
 - `python3 -c "import yaml; yaml.safe_load(...)"` on both the workflow and compose YAML — both parse.
-- Not run: an actual GitHub Actions execution (requires pushing to `main`), and a `docker pull` from GHCR by an external host.
+- `uv run pytest -q` (backend, full suite including the new file) — 126/126 pass.
+- `uv run ruff check .` (backend) — pass.
+- `npm run --workspace extension typecheck` / `test` / `lint` / `build` — pass (70/70 tests; the lint run's one warning is the pre-existing `interviewStore.tsx` fast-refresh warning from Feature 01, not new).
+- Not run: an actual GitHub Actions execution (requires pushing to `main`), a `docker pull` from GHCR by an external host, and a real browser round-trip against a backend with `SESSION_SHARED_SECRETS`/caps actually set (covered at the ASGI-test-client level, not live).
 
 ## Verification
-Dockerfile and compose file are verified working end-to-end locally (build → run → healthy → `/health` reachable). The GHCR publish step is verified by YAML validity and matches the documented `docker/*-action` usage pattern, but has not yet been exercised by a real GitHub Actions run — flagged above rather than claimed as done.
+Dockerfile/compose verified end-to-end locally (build → run → healthy → `/health` reachable). Auth + rate-limit behaviour verified via real ASGI-level `TestClient.websocket_connect` integration tests (same pattern the rest of this file's WS tests use) — handshake rejection with no/wrong token and app close code 4401, acceptance with a token from a multi-value list, capacity cap rejecting a second `session.start` while allowing `session.resume` through, and a session forced into `review` + closed once past its duration cap and no longer resumable. The GHCR publish step is still only verified by YAML validity, not a real Actions run.
 
 ## Known issues/blockers
-- **No backend auth exists yet.** Anyone who reaches a hosted backend URL can open a session and consume the configured LLM/STT/TTS provider credits — fine while the backend only runs on `127.0.0.1`, not fine once it's hosted publicly. User has been given options (shared-secret query-param token recommended); implementation is pending their decision on hosting target, since that determines whether this is even needed for the hackathon.
 - Hosting target itself is still undecided by the user (VPS vs. Cloud Run vs. other) — DEPLOY.md's hosted-path section depends on that choice.
+- The duration cap is checked lazily (on the next inbound message), not by a background sweep — deliberate simplification (CLAUDE.md: avoid unnecessary infrastructure) since an active interview has frequent inbound messages (mic audio chunks, code updates) that make the lag negligible in practice; a session sitting fully idle won't be force-ended until it next receives *any* message, but such a session also isn't driving any LLM/STT/TTS cost in the meantime.
 
 ## Next action
-Once the user picks a hosting target (and an auth stance), write DEPLOY.md (load-unpacked steps + Playwright screenshots, plus the chosen hosted-deploy path) and, if needed, implement the shared-secret gate on `session.start` in `backend/app/websocket/interview.py` + the extension's connect flow.
+Once the user picks a hosting target, write DEPLOY.md: load-unpacked steps + Playwright screenshots, the chosen hosted-deploy path, and how to set `SESSION_SHARED_SECRETS`/`MAX_CONCURRENT_SESSIONS`/`SESSION_MAX_DURATION_SECONDS` + the matching `VITE_BACKEND_WS_TOKEN` build for that deploy.

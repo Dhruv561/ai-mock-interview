@@ -16,13 +16,24 @@ const DEFAULT_BACKEND_WS_URL = "ws://127.0.0.1:8000/ws/interview";
 
 let singleton: InterviewSocket | null = null;
 
+// Judges-only auth (Feature 17): when the deployed backend has
+// SESSION_SHARED_SECRETS configured, it rejects the WS handshake unless a
+// matching `?token=` query param is present. Baked in at build time via
+// VITE_BACKEND_WS_TOKEN so a demo build can carry its own code without a
+// source change — unset (local dev default) means the backend has no
+// secrets configured either, so this is a no-op.
+function backendWsUrl(): string {
+  const base = import.meta.env.VITE_BACKEND_WS_URL || DEFAULT_BACKEND_WS_URL;
+  const token = import.meta.env.VITE_BACKEND_WS_TOKEN;
+  if (!token) return base;
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export function getInterviewSocket(): InterviewSocket {
   // portSocketFactory, not a direct `new WebSocket`: the socket has to be
   // opened from the service worker, because leetcode.com's CSP blocks a
   // page-context connection to the backend outright. See portSocket.ts.
-  singleton ??= connectInterviewSocket(
-    import.meta.env.VITE_BACKEND_WS_URL || DEFAULT_BACKEND_WS_URL,
-    portSocketFactory,
-  );
+  singleton ??= connectInterviewSocket(backendWsUrl(), portSocketFactory);
   return singleton;
 }
