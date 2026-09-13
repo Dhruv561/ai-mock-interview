@@ -2,6 +2,7 @@ import { AudioLevelMeter } from "../AudioLevelMeter";
 import { EndReviewButton } from "../EndReviewButton";
 import { HintButton } from "../HintButton";
 import { MuteButton } from "../MuteButton";
+import { Rubric } from "../Rubric";
 import { PhaseList } from "./PhaseList";
 import { getLastInterviewerMessage, usePanelAudioLevels } from "./panelHelpers";
 import type { PanelBodyProps } from "./PanelBodyProps";
@@ -42,6 +43,7 @@ export function DockedPanel({
   onToggleMute,
   getTtsAnalyser,
   stage,
+  liveRubric,
   onHint,
   hintDisabled,
   onEnd,
@@ -59,7 +61,7 @@ export function DockedPanel({
     <div className="flex min-h-0 flex-1 flex-col bg-dark-panel text-dark-ink">
       <div className="flex flex-col gap-4 border-b border-dark-border p-5">
         <div className="flex items-center gap-3.5">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent-on-dark to-emerald-800 font-mono text-[13px] text-dark-panel">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-accent-on-dark to-emerald-800 font-mono text-[13px] text-dark-panel">
             AI
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
@@ -104,6 +106,11 @@ export function DockedPanel({
         <div className="mt-3">
           <PhaseList stage={stage} />
         </div>
+        {liveRubric && (
+          <div className="mt-5 border-t border-dark-border pt-5">
+            <Rubric rubric={liveRubric} label="LIVE RUBRIC PREVIEW" />
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2 p-5">

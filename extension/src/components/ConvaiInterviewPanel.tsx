@@ -8,6 +8,7 @@ import {
 import { useConvaiAudioPlayback } from "../media/useConvaiAudioPlayback";
 import { useConvaiMicrophoneCapture } from "../media/useConvaiMicrophoneCapture";
 import type { ConvaiSocket } from "../networking/convaiSocket";
+import { useConvaiProgress } from "../content/convaiProgress";
 import { usePanelLayout } from "../state/panelLayout";
 import { useConvaiInterviewEngine } from "../state/convaiInterviewEngine";
 import { useInterview } from "../state/interviewStore";
@@ -33,8 +34,17 @@ import { StatusIndicator } from "./StatusIndicator";
  * convaiInterviewEngine.ts, the media/useConvai* hooks) is pipeline-specific.
  *
  * Known gaps vs. InterviewPanel.tsx (documented, not bugs — see the spike
- * README): no screen capture, no live interview stage (always shown as
- * null/hidden), no rubric (Convai has no rubric evidence to score).
+ * README): the live rubric here is a preview refreshed from the backend's
+ * `/api/convai/{analyse-code,live-rubric}` heuristics on code/transcript/
+ * hint progress, not the legacy pipeline's fully evidence-linked live
+ * rubric (architecture.md §O) — that still only exists on this pipeline's
+ * final Review screen. Stage and hint progression are wired through a
+ * local progress store so the shared stage views and hint cap behave like
+ * the legacy pipeline. No screen capture — unlike the legacy pipeline,
+ * this panel never sends screen.recording.* events anywhere (this
+ * pipeline has no InterviewSocket at all), and nothing ever reads the
+ * recorded blob, so it bought a permission prompt for zero product value
+ * — deliberately dropped rather than left half-wired (2026-09-13).
  */
 export function ConvaiInterviewPanel() {
   const { state, dispatch } = useInterview();
@@ -42,6 +52,7 @@ export function ConvaiInterviewPanel() {
   const mic = useConvaiMicrophoneCapture();
   const audio = useConvaiAudioPlayback(socket);
   const { layout, setLayout } = usePanelLayout();
+  const progress = useConvaiProgress();
   useConvaiInterviewEngine(socket, state.elapsedSeconds, dispatch, recordConvaiTranscriptEntry);
   const [micBlockedReason, setMicBlockedReason] = useState<MicBlockedReason | null>(null);
 
@@ -105,14 +116,15 @@ export function ConvaiInterviewPanel() {
     state,
     micStatus: mic.status,
     getMicAnalyser: mic.getAnalyser,
-    screenStatus: "idle", // no screen capture in this spike — see header comment
+    screenStatus: "idle", // no screen capture in this pipeline — see header comment
     isSpeaking: audio.isSpeaking,
     isMuted: audio.isMuted,
     onToggleMute: audio.toggleMute,
     getTtsAnalyser: audio.getAnalyser,
-    stage: null, // no live stage machine in this pipeline — see header comment
+    stage: progress.stage,
+    liveRubric: progress.liveRubric,
     onHint: handleHint,
-    hintDisabled: false, // no hint-level cap to enforce (no tiered hints at all — see convaiSession.ts)
+    hintDisabled: progress.pendingHintLevel !== null || progress.hints.length >= 3,
     onEnd: () => void handleEnd(),
   };
 

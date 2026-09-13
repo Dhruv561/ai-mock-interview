@@ -6,6 +6,7 @@ import { MuteButton } from "../MuteButton";
 import { ScreenBadge } from "../ScreenBadge";
 import { SpeakingBadge } from "../SpeakingBadge";
 import { StageBadge } from "../StageBadge";
+import { Rubric } from "../Rubric";
 import { Transcript } from "../Transcript";
 import { usePanelAudioLevels } from "./panelHelpers";
 import type { PanelBodyProps } from "./PanelBodyProps";
@@ -34,6 +35,7 @@ export function SplitPanel({
   onToggleMute,
   getTtsAnalyser,
   stage,
+  liveRubric,
   onHint,
   hintDisabled,
   onEnd,
@@ -57,6 +59,7 @@ export function SplitPanel({
         <AudioLevelMeter levels={ttsLevels} label="Interviewer audio level" />
       </div>
       <StageBadge stage={stage} />
+      {liveRubric && <div className="px-5 py-2"><Rubric rubric={liveRubric} label="LIVE RUBRIC PREVIEW" /></div>}
       <Transcript messages={state.messages} candidateDraft={state.candidateDraft} />
       <div className="flex gap-2 px-5 py-4">
         <MuteButton isMuted={isMuted} onClick={onToggleMute} />

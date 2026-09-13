@@ -106,6 +106,7 @@ export function InterviewPanel({
     onToggleMute: audio.toggleMute,
     getTtsAnalyser: audio.getAnalyser,
     stage,
+    liveRubric: null,
     onHint: handleHint,
     hintDisabled: state.hints.length >= MAX_HINT_LEVEL,
     onEnd: handleEnd,

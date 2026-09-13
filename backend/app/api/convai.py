@@ -6,20 +6,25 @@ can wire the LeetCode page into instead of the real one, so it gets its
 own small router rather than growing api/routes.py or websocket/
 interview.py with a second, unrelated protocol.
 
-Two endpoints:
+Three endpoints:
   - GET  /api/convai/signed-url — lets the extension open a WebSocket
     straight to ElevenLabs without ever holding ELEVENLABS_API_KEY
     itself (CLAUDE.md §7), same rule as the real pipeline's TTS key.
+    - POST /api/convai/analyse-code — reuses the legacy backend code
+        analyser and returns a backend-authored rubric preview for the
+        current code snapshot so the client does not invent that state.
+    - POST /api/convai/live-rubric — returns the same backend-authored
+        rubric preview for transcript, hint, and stage changes that do not
+        require a fresh code-analysis pass.
   - POST /api/convai/review — this pipeline has no InterviewState of its
-    own (no controller, no rubric, no code analysis — see the spike
-    README's "Known limitations"), so there is nothing for
-    generate_final_review to read at session end unless something
-    builds one. This endpoint builds a minimal InterviewState from the
-    transcript the extension captured client-side and hands it to the
-    *real* evaluator (agents/evaluator.py) — same evidence-based review
-    the primary pipeline produces, just fed from this pipeline's own
-    thinner record (transcript only, no rubric/hint/code-analysis
-    evidence to cite).
+        own (no controller, no live rubric source), so there is nothing for
+        generate_final_review to read at session end unless something builds
+        one. This endpoint builds a minimal InterviewState from the
+        transcript the extension captured client-side, plus the client-side
+        stage/hint/code-analysis evidence trail, and hands it to the *real*
+        evaluator (agents/evaluator.py) — same evidence-based review the
+        primary pipeline produces, just fed from this pipeline's own thinner
+        record.
 """
 
 from __future__ import annotations
@@ -27,12 +32,13 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.agents.code_analyser import analyse_code
 from app.agents.evaluator import FinalReviewGenerationError, generate_final_review
 from app.config import Settings, get_settings
-from app.interview.schemas import ProblemInfo
-from app.interview.state import InterviewState, TranscriptEntry
+from app.interview.schemas import InterviewStage, ProblemInfo
+from app.interview.state import InterviewState, StageHistoryEntry, TranscriptEntry
 from app.providers.convai.elevenlabs import ConvaiSignedUrlError, get_signed_url
 from app.providers.llm import get_llm_provider
 
@@ -80,10 +86,80 @@ class ConvaiTranscriptEntry(BaseModel):
     timestamp: float
 
 
+class ConvaiHintEntry(BaseModel):
+    level: int
+    text: str
+    timestamp: float
+
+
+class ConvaiStageHistoryEntry(BaseModel):
+    stage: InterviewStage
+    timestamp: float
+
+
+class ConvaiCodeAnalysisRequest(BaseModel):
+    code: str
+    language: str
+    stage: InterviewStage | None = None
+    transcript_count: int = 0
+    hint_count: int = 0
+    stage_history: list[ConvaiStageHistoryEntry] = Field(default_factory=list)
+
+
+class ConvaiLiveRubricRequest(BaseModel):
+    stage: InterviewStage | None = None
+    transcript_count: int = 0
+    hint_count: int = 0
+    current_code: str = ""
+    code_analysis_observations: list[str] = Field(default_factory=list)
+    stage_history: list[ConvaiStageHistoryEntry] = Field(default_factory=list)
+
+
+def _stage_reached(
+    stage_history: list[ConvaiStageHistoryEntry],
+    stage: InterviewStage | None,
+    target: InterviewStage,
+) -> bool:
+    return stage == target or any(entry.stage == target for entry in stage_history)
+
+
+def _build_live_rubric(
+    *,
+    stage: InterviewStage | None,
+    transcript_count: int,
+    hint_count: int,
+    current_code: str,
+    code_analysis_observations: list[str],
+    stage_history: list[ConvaiStageHistoryEntry],
+) -> dict[str, int]:
+    clarifying = (
+        1 if _stage_reached(stage_history, stage, "clarification") or transcript_count > 0 else 0
+    )
+    approach = 1 if _stage_reached(stage_history, stage, "approach") or transcript_count > 1 else 0
+    code_quality = (
+        max(0, 3 - min(len(code_analysis_observations), 3)) if current_code.strip() else 0
+    )
+    complexity = 1 if _stage_reached(stage_history, stage, "complexity") else 0
+    communication = min(3, (transcript_count // 2) + (1 if hint_count > 0 else 0))
+    testing = 1 if _stage_reached(stage_history, stage, "testing") else 0
+    return {
+        "clarifying": clarifying,
+        "approach": approach,
+        "code_quality": code_quality,
+        "complexity": complexity,
+        "communication": communication,
+        "testing": testing,
+    }
+
+
 class ConvaiReviewRequest(BaseModel):
     problem: ProblemInfo
     language: str
     transcript: list[ConvaiTranscriptEntry]
+    code_analysis_observations: list[str] = Field(default_factory=list)
+    current_code: str = ""
+    hints: list[ConvaiHintEntry] = Field(default_factory=list)
+    stage_history: list[ConvaiStageHistoryEntry] = Field(default_factory=list)
     started_at: float = 0.0
 
 
@@ -110,7 +186,17 @@ async def review(body: ConvaiReviewRequest, token: str | None = Query(default=No
             TranscriptEntry(speaker=entry.speaker, text=entry.text, timestamp=entry.timestamp)
             for entry in body.transcript
         ],
+        current_code=body.current_code,
+        code_analysis_observations=body.code_analysis_observations,
         started_at=body.started_at,
+        hint_level=min(max((hint.level for hint in body.hints), default=0), 3),
+        recent_interviewer_actions=[
+            f"hint (level {hint.level}): {hint.text}" for hint in body.hints
+        ],
+        stage_history=[
+            StageHistoryEntry(stage=entry.stage, timestamp=entry.timestamp)
+            for entry in body.stage_history
+        ],
     )
 
     provider = get_llm_provider(settings)
@@ -120,3 +206,41 @@ async def review(body: ConvaiReviewRequest, token: str | None = Query(default=No
         logger.warning("Convai spike review generation failed: %s", error)
         raise HTTPException(502, str(error)) from error
     return final_review.model_dump()
+
+
+@router.post("/analyse-code")
+async def analyse_code_endpoint(
+    body: ConvaiCodeAnalysisRequest, token: str | None = Query(default=None)
+) -> dict[str, object]:
+    settings = get_settings()
+    _check_authorized(token, settings)
+    observations = analyse_code(body.code, body.language)
+    return {
+        "observations": observations,
+        "live_rubric": _build_live_rubric(
+            stage=body.stage,
+            transcript_count=body.transcript_count,
+            hint_count=body.hint_count,
+            current_code=body.code,
+            code_analysis_observations=observations,
+            stage_history=body.stage_history,
+        ),
+    }
+
+
+@router.post("/live-rubric")
+async def live_rubric_endpoint(
+    body: ConvaiLiveRubricRequest, token: str | None = Query(default=None)
+) -> dict[str, dict[str, int]]:
+    settings = get_settings()
+    _check_authorized(token, settings)
+    return {
+        "live_rubric": _build_live_rubric(
+            stage=body.stage,
+            transcript_count=body.transcript_count,
+            hint_count=body.hint_count,
+            current_code=body.current_code,
+            code_analysis_observations=body.code_analysis_observations,
+            stage_history=body.stage_history,
+        )
+    }

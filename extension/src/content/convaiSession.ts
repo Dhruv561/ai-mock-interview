@@ -9,7 +9,19 @@
 import { connectConvaiSocket, type ConvaiSocket } from "../networking/convaiSocket";
 import { getCurrentSnapshot } from "./editor";
 import { getCachedProblemInfo } from "./interviewSession";
+import {
+  completeConvaiProgress,
+  getConvaiProgressSnapshot,
+  recordConvaiCodeUpdate,
+  recordConvaiCodeAnalysis,
+  recordConvaiTranscript,
+  setConvaiLiveRubric,
+  requestConvaiHint as queueConvaiHint,
+  resetConvaiProgress,
+  startConvaiProgress,
+} from "./convaiProgress";
 import type { ProblemInfo } from "./leetcode";
+import type { RubricState } from "../state/types";
 
 const DEFAULT_BACKEND_HTTP_URL = "http://127.0.0.1:8000";
 
@@ -17,6 +29,10 @@ interface TranscriptRecord {
   speaker: "candidate" | "interviewer";
   text: string;
   timestamp: number;
+}
+
+interface ConvaiPreviewResponse {
+  live_rubric: RubricState;
 }
 
 let socket: ConvaiSocket | null = null;
@@ -53,12 +69,105 @@ async function backendFetch(
   });
 }
 
+function buildPreviewPayload(code: string, language: string): {
+  code: string;
+  language: string;
+  stage: string | null;
+  transcript_count: number;
+  hint_count: number;
+  stage_history: Array<{ stage: string; timestamp: number }>;
+} {
+  const progress = getConvaiProgressSnapshot();
+  return {
+    code,
+    language,
+    stage: progress.stage,
+    transcript_count: progress.transcriptCount,
+    hint_count: progress.hints.length,
+    stage_history: progress.stageHistory,
+  };
+}
+
+// Backend's ConvaiLiveRubricRequest schema (backend/app/api/convai.py) does
+// NOT mirror ConvaiCodeAnalysisRequest's shape — it takes `current_code`
+// (not `code`), no `language` at all, and an explicit
+// `code_analysis_observations` list rather than re-running analysis. This
+// is a deliberately lighter call than requestConvaiCodeAnalysis: it refreshes
+// the rubric off already-known progress state without paying for a code
+// re-analysis round trip, so it's the right thing to call after a
+// transcript/hint change that doesn't itself touch the code.
+async function requestConvaiLiveRubric(): Promise<RubricState | null> {
+  const progress = getConvaiProgressSnapshot();
+  try {
+    const response = await backendFetch(backendUrl("/api/convai/live-rubric"), {
+      method: "POST",
+      body: JSON.stringify({
+        stage: progress.stage,
+        transcript_count: progress.transcriptCount,
+        hint_count: progress.hints.length,
+        current_code: progress.currentCode,
+        code_analysis_observations: progress.codeAnalysisObservations,
+        stage_history: progress.stageHistory,
+      }),
+    });
+    if (!response.ok) {
+      console.error("[ai-mock-interview] convai live rubric request failed", response.body);
+      return null;
+    }
+    const parsed = JSON.parse(response.body) as ConvaiPreviewResponse;
+    return parsed.live_rubric;
+  } catch (error) {
+    console.error("[ai-mock-interview] convai live rubric request errored", error);
+    return null;
+  }
+}
+
+async function requestConvaiCodeAnalysis(
+  code: string,
+  language: string,
+): Promise<{ observations: string[]; liveRubric: RubricState | null } | null> {
+  try {
+    const response = await backendFetch(backendUrl("/api/convai/analyse-code"), {
+      method: "POST",
+      body: JSON.stringify({
+        ...buildPreviewPayload(code, language),
+      }),
+    });
+    if (!response.ok) {
+      console.error("[ai-mock-interview] convai code analysis request failed", response.body);
+      return null;
+    }
+    const parsed = JSON.parse(response.body) as { observations?: unknown; live_rubric?: unknown };
+    const observations = Array.isArray(parsed.observations)
+      ? parsed.observations.filter((value): value is string => typeof value === "string")
+      : [];
+    const liveRubric =
+      parsed.live_rubric && typeof parsed.live_rubric === "object"
+        ? (parsed.live_rubric as RubricState)
+        : null;
+    return { observations, liveRubric };
+  } catch (error) {
+    console.error("[ai-mock-interview] convai code analysis request errored", error);
+    return null;
+  }
+}
+
 export function hasActiveConvaiSession(): boolean {
   return sessionStarted;
 }
 
 export function recordConvaiTranscriptEntry(speaker: "candidate" | "interviewer", text: string): void {
-  transcript.push({ speaker, text, timestamp: Date.now() / 1000 - sessionStartedAt });
+  const timestamp = Date.now() / 1000 - sessionStartedAt;
+  transcript.push({ speaker, text, timestamp });
+  recordConvaiTranscript(speaker, text, timestamp);
+  // Transcript/stage progress moves the rubric (clarifying/approach/
+  // communication categories) without any code change — refresh the
+  // backend-authored rubric here rather than waiting for the next code
+  // update, which may never come this turn.
+  if (!sessionStarted) return;
+  void requestConvaiLiveRubric().then((liveRubric) => {
+    if (liveRubric && sessionStarted) setConvaiLiveRubric(liveRubric);
+  });
 }
 
 /**
@@ -72,6 +181,8 @@ export async function startConvaiSession(): Promise<ConvaiSocket | null> {
 
   const problem = getCachedProblemInfo();
   if (!problem) return null;
+
+  resetConvaiProgress();
 
   let signedUrl: string;
   try {
@@ -91,6 +202,7 @@ export async function startConvaiSession(): Promise<ConvaiSocket | null> {
   sessionLanguage = snapshot?.language ?? "plaintext";
   sessionStartedAt = Date.now() / 1000;
   transcript = [];
+  startConvaiProgress();
   sessionStarted = true;
   socket = connectConvaiSocket(signedUrl);
   return socket;
@@ -103,15 +215,28 @@ export async function startConvaiSession(): Promise<ConvaiSocket | null> {
  * code, never OCR/screen content). */
 export function sendConvaiCodeUpdate(code: string, language: string): void {
   if (!socket || !sessionStarted) return;
+  recordConvaiCodeUpdate(code, language, Date.now() / 1000 - sessionStartedAt);
+  void requestConvaiCodeAnalysis(code, language).then((result) => {
+    if (!result || !sessionStarted) return;
+    recordConvaiCodeAnalysis(result.observations);
+    if (result.liveRubric) setConvaiLiveRubric(result.liveRubric);
+  });
   socket.sendContextualUpdate(`The candidate's current code (${language}):\n\n${code}`);
 }
 
-/** This pipeline has no tiered hint system (documented limitation, see
- * the spike README) — a hint request is just a contextual nudge. */
+/** Requests a tiered hint from the hosted agent and records that the
+ * next interviewer response should be treated as a hint, not a normal
+ * transcript turn. */
 export function requestConvaiHint(): void {
   if (!socket || !sessionStarted) return;
+  const hintLevel = queueConvaiHint();
+  if (!hintLevel) return;
   socket.sendContextualUpdate(
-    "The candidate has asked for a hint. Give a small nudge without revealing the solution.",
+    hintLevel === 1
+      ? "The candidate has asked for a level 1 hint. Give a gentle conceptual nudge without naming a specific data structure or algorithm."
+      : hintLevel === 2
+        ? "The candidate has asked for a level 2 hint. Be more specific and name the relevant idea, but do not explain the full solution step by step."
+        : "The candidate has asked for a level 3 hint. Give concrete guidance toward the solution, but do not write the code or reveal the final answer outright.",
   );
 }
 
@@ -126,17 +251,28 @@ export function requestConvaiHint(): void {
 export async function endConvaiSession(): Promise<Record<string, unknown> | null> {
   if (!sessionStarted || !sessionProblem) return null;
   sessionStarted = false;
+  completeConvaiProgress(Date.now() / 1000 - sessionStartedAt);
   socket?.close();
   socket = null;
 
   const problem = sessionProblem;
   const language = sessionLanguage;
   const capturedTranscript = transcript;
+  const progress = getConvaiProgressSnapshot();
 
   try {
     const response = await backendFetch(backendUrl("/api/convai/review"), {
       method: "POST",
-      body: JSON.stringify({ problem, language, transcript: capturedTranscript, started_at: 0 }),
+      body: JSON.stringify({
+        problem,
+        language,
+        transcript: capturedTranscript,
+        code_analysis_observations: progress.codeAnalysisObservations,
+        current_code: progress.currentCode,
+        hints: progress.hints,
+        stage_history: progress.stageHistory,
+        started_at: 0,
+      }),
     });
     if (!response.ok) {
       console.error("[ai-mock-interview] convai review request failed", response.body);
@@ -158,4 +294,5 @@ export function resetConvaiSession(): void {
   sessionStarted = false;
   sessionProblem = null;
   transcript = [];
+  resetConvaiProgress();
 }

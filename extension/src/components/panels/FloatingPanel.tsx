@@ -3,6 +3,7 @@ import { AudioLevelMeter } from "../AudioLevelMeter";
 import { EndReviewButton } from "../EndReviewButton";
 import { HintButton } from "../HintButton";
 import { MuteButton } from "../MuteButton";
+import { Rubric } from "../Rubric";
 import { STAGE_LABELS } from "../stageInfo";
 import { getLastInterviewerMessage, usePanelAudioLevels } from "./panelHelpers";
 import type { PanelBodyProps } from "./PanelBodyProps";
@@ -32,6 +33,7 @@ export function FloatingPanel({
   onToggleMute,
   getTtsAnalyser,
   stage,
+  liveRubric,
   onHint,
   hintDisabled,
   onEnd,
@@ -52,18 +54,18 @@ export function FloatingPanel({
     // stacked with its 10px gap, not stretched full-height.
     <div className="flex w-full flex-col items-center gap-2.5">
       {lastInterviewerMessage && (
-        <div className="animate-message-pop max-w-[640px] rounded-full bg-ink/90 px-4 py-2.5 text-center text-[14.5px] leading-snug text-white backdrop-blur">
+        <div className="animate-message-pop max-w-160 rounded-full bg-ink/90 px-4 py-2.5 text-center text-[14.5px] leading-snug text-white backdrop-blur">
           &ldquo;{lastInterviewerMessage.text}&rdquo;
         </div>
       )}
 
       {state.candidateDraft && (
-        <div className="animate-message-pop max-w-[640px] rounded-full border border-panel-border bg-card-bg px-4 py-2 text-center text-[13px] leading-snug text-ink-muted italic">
+        <div className="animate-message-pop max-w-160 rounded-full border border-panel-border bg-card-bg px-4 py-2 text-center text-[13px] leading-snug text-ink-muted italic">
           {state.candidateDraft}
         </div>
       )}
 
-      <div className="flex h-[60px] flex-wrap items-center gap-3.5 rounded-full border border-panel-border bg-card-bg py-2.5 pr-2.5 pl-[18px] shadow-xl">
+      <div className="flex h-15 flex-wrap items-center gap-3.5 rounded-full border border-panel-border bg-card-bg py-2.5 pr-2.5 pl-4.5 shadow-xl">
         <div className="flex items-center gap-2">
           <span
             className={`h-2 w-2 rounded-full ${state.status === "recording" ? "bg-accent animate-pulse" : "bg-ink-faint"}`}
@@ -73,11 +75,11 @@ export function FloatingPanel({
             {formatElapsed(state.elapsedSeconds)}
           </span>
         </div>
-        <div className="h-[26px] w-px bg-panel-border" />
+        <div className="h-6.5 w-px bg-panel-border" />
         <span className="text-[13px] whitespace-nowrap text-ink-muted">
           {stage ? STAGE_LABELS[stage] : "—"}
         </span>
-        <div className="h-[26px] w-px bg-panel-border" />
+        <div className="h-6.5 w-px bg-panel-border" />
         <AudioLevelMeter levels={activeLevels} label="Current speaker audio level" />
 
         <div className="ml-auto flex gap-2">
@@ -86,6 +88,12 @@ export function FloatingPanel({
           <EndReviewButton onClick={onEnd} />
         </div>
       </div>
+
+      {liveRubric && (
+        <div className="w-full max-w-160 rounded-2xl border border-panel-border bg-card-bg px-5 py-4 shadow-lg">
+          <Rubric rubric={liveRubric} label="LIVE RUBRIC PREVIEW" />
+        </div>
+      )}
     </div>
   );
 }
