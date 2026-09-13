@@ -8,6 +8,8 @@ High-level project dashboard. Update after every meaningful work slice, per `CLA
 
 Last updated: 2026-09-13 (Feature 20 — code quality cleanup)
 
+**Bug fix (2026-09-13, Feature 04):** a user-reported bug — clicking off the extension panel onto LeetCode's code editor "quit" an in-progress interview, intermittently — turned out to be `content/index.tsx`'s SPA re-mount watcher comparing raw `window.location.pathname`. LeetCode's own Description/Editorial/Solutions/Submissions tabs each have a distinct pathname under the same problem, so switching between them (not just clicking the code editor itself) tripped a full session reset. Fixed by comparing the problem slug instead. See Feature 04's record for detail; not yet re-verified live in a real browser this session.
+
 Three features were added after the "16 features" banner below was written (Features 17-19, all merged into `main` 2026-09-13): 17 (resizable panel, `IMPLEMENTED`) and 18 (panel layout presets/live transcript/audio meters, `IMPLEMENTED (not VERIFIED)`) both still need the same kind of real-browser manual pass Feature 16 below is waiting on; 19 (backend containerization/CI/CD, `VERIFIED`) is live on the user's own VPS with its auth gate confirmed externally. See the milestone table further down for the authoritative current status of all 19.
 
 > **Feature 16 (integration hardening + demo readiness) is now `VERIFIED`** (not `DONE` — the two things left are inherently things only a human can do: a real click-through rehearsal and a latency/feel judgement). Everything checkable from this environment was done directly (not blind-dispatched — this feature needs judgement calls, not just parallelizable slices), with two agents doing disjoint audit/docs work in parallel alongside it:
