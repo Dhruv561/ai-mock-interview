@@ -9,12 +9,12 @@ import type { PanelBodyProps } from "./PanelBodyProps";
 
 /**
  * "Floating" (design ref 1b) — the minimal posture: just the current
- * exchange as chat-style bubbles, plus one control pill. The design
- * reference floats this as a full-viewport-width overlay outside the
- * docked column; here it stays inside the panel's existing reserved
- * 420px-wide column (content/layout.ts) instead of introducing a second,
- * page-width overlay/reflow mode — one page-space model, not two, per
- * CLAUDE.md's "keep the architecture simple".
+ * exchange as chat-style bubbles, plus one control pill. This body renders
+ * inside a bottom-anchored overlay bar (content/App.tsx's `PanelShell`,
+ * revisited 2026-09-13), not the docked panel's reserved right-side column
+ * — matching the design reference, which floats this above the code rather
+ * than pinning it into the sidebar. See architecture.md's panel-shell note
+ * for why the outer shell (not just this body) has to switch per layout.
  */
 export function FloatingPanel({
   state,
