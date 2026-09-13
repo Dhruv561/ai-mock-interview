@@ -891,26 +891,43 @@ Whenever a real Supabase/Postgres `DATABASE_URL` is available: run `psql $DATABA
 # Feature 16 — Integration hardening and demo readiness
 
 ## Status
-PLANNED
+VERIFIED (not DONE — see Verification)
 
 ## Priority
 P0
 
+## started_at
+2026-09-13
+
+## Current task
+Complete except the parts that are inherently manual (a human clicking through a real browser session with a real mic, and judging conversational latency/demo feel) — everything checkable from this environment is done.
+
 ## Acceptance criteria
-- [ ] complete happy path works
-- [ ] extension can reconnect
-- [ ] common API failures are handled
-- [ ] permissions are understandable
-- [ ] latency is acceptable
-- [ ] build is reproducible
-- [ ] README setup works from a clean environment
-- [ ] demo flow is rehearsable end-to-end
+- [x] complete happy path works — new chained integration test drives the real client-event sequence (start → code_update → question → cooldown-blocked retrigger → code_update → different question → hint → rubric-carrying code_update → end → review) through the real WS handler with a monkeypatched clock, so cooldown gating is genuinely exercised, not bypassed
+- [x] extension can reconnect — confirmed already covered: `websocket.test.ts` (backoff/reconnect) + `test_websocket_interview.py`'s resume/replay tests
+- [x] common API failures are handled — STT now has both failure paths tested (start failure was already covered; send failure on an established connection was a real gap, now closed), TTS failure already covered, persistence write failure now covered (was previously only the success-path call-count test)
+- [x] permissions are understandable — manifest permissions are minimal and inline-documented (`extension/src/manifest.ts`); closed a real gap where mic denial only showed a badge but let the interview proceed anyway, contradicting PRD §14 ("prevent starting the interview if audio is essential") — `handleStart` now gates on the real permission outcome and blocks with a clear message + Try Again
+- [ ] latency is acceptable — inherently a manual/qualitative judgement during a live rehearsal (architecture.md §W is explicit this isn't a unit-testable criterion); not something this session can assess without a real browser + real providers
+- [x] build is reproducible — verified via an actual clean-checkout run: `rm -rf backend/.venv && uv sync` and a fresh `npm install --legacy-peer-deps`, both followed by the full test/lint/typecheck/build pipeline, all pass; `scripts/check.sh` also verified end-to-end
+- [x] README setup works from a clean environment — the "Project status" section was badly stale (still describing Phase 1/no-AI-wiring); rewritten to reflect the real state, and the setup steps themselves were exercised by the clean-checkout verification above
+- [~] demo flow is rehearsable end-to-end — a full written rehearsal script now exists (`DEMO.md`: setup/provider-priority, the click-through with judge call-outs, known rough edges to route around live, a pre-flight checklist), but an actual human click-through rehearsal is still outstanding — needs a real browser, mic, and (ideally) real API keys
 
 ## Completed
-- None yet.
+- `backend/tests/test_websocket_interview.py`: `test_full_interview_happy_path_start_to_review` (chained real-sequence test with monkeypatched clock), `test_persistence_write_failure_does_not_break_the_session`, `test_stt_send_failure_degrades_gracefully`.
+- `extension/src/media/useMicrophoneCapture.ts` + `.test.ts`: `start()` now resolves the actual outcome (`active`/`denied`/`unsupported`/`idle`) instead of `void`.
+- `extension/src/components/StartScreen.tsx`: clear blocking message + "Try Again" when mic is denied/unsupported.
+- `extension/src/components/InterviewPanel.tsx`: `handleStart` awaits the mic gate before starting the session; screen capture only starts once the gate passes.
+- `README.md`: stale "Project status" section rewritten to match reality.
+- `DEMO.md` (new): full demo rehearsal runbook.
+- `architecture.md` §V: corrected every row against the actual implementation (screen-capture denial's UI-string quote, STT failure's two distinct paths, mic-denied's real mechanism) and the "Done when" line now names exactly which rows are automated-covered vs. genuinely manual-only.
+- Verified backend (197 tests, ruff clean) and extension (113 tests, typecheck/lint/build clean) suites both pass, including from a clean checkout.
 
 ## Remaining
-- All implementation work.
+- A human demo rehearsal following `DEMO.md` in a real browser with a real mic (ideally with real Anthropic/ElevenLabs/Deepgram keys, per `DEMO.md`'s provider-priority guidance) — this is the only acceptance criterion this session cannot itself satisfy.
+- Latency/conversational-feel judgement during that same rehearsal.
+
+## Verification
+Backend: `uv run pytest -q` → 197/197 passed; `uv run ruff check .` → clean. Extension: `npm run --workspace extension typecheck/lint/test/build` → 113/113 tests, clean. Both suites re-verified from a clean checkout (fresh `.venv`, fresh `node_modules`).
 
 ## Next action
-Run the full vertical slice and fix blockers.
+Whenever a real browser + mic (and ideally real provider keys) are available: follow `DEMO.md` end to end once as a genuine rehearsal, judge whether it feels conversational (latency), fix whatever actually breaks or feels off, then flip to `DONE`. This is also the point at which every other `VERIFIED`-not-`DONE` feature (05/08/10/11/12/13/14/15) gets its own live confirmation in the same pass.

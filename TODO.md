@@ -103,10 +103,10 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 ## Phase 11 — Persistence + end-to-end hardening (Feature 15, 16)
 
 - [x] `persistence/repository.py`, `in_memory.py`, `postgres.py`
-- [ ] Full happy-path integration test: `start → transcript → code_update → question → hint → end → review`
-- [ ] README setup verified from a clean checkout
-- [ ] Repeated full manual runs; fix latency/race/UI-overflow/state bugs found
-- [ ] Demo rehearsal
+- [x] Full happy-path integration test: `start → transcript → code_update → question → hint → end → review` (chained, real cooldown gating via a monkeypatched clock, not per-piece tests)
+- [x] README setup verified from a clean checkout (fresh `.venv` + fresh `node_modules`, full check.sh pipeline)
+- [ ] Repeated full manual runs; fix latency/race/UI-overflow/state bugs found — needs a real browser/mic session
+- [ ] Demo rehearsal — script written (`DEMO.md`); the actual human click-through is still open
 
 ---
 
@@ -114,16 +114,16 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 All 15 checklist items in PRD.md §16, restated as one checklist:
 
-- [ ] Extension + backend run locally per README
-- [ ] Supported LeetCode problem opens and is detected
-- [ ] Interview starts, persistent recording indicator visible
-- [ ] Interviewer panel visible and matches the design reference
-- [ ] Microphone speech is captured and transcribed live
-- [ ] Meaningful code changes are detected (debounced, not per-keystroke)
-- [ ] At least one contextually relevant AI question fires based on real speech/code
-- [ ] Interviewer is heard via ElevenLabs
-- [ ] At least one hint can be requested and received
-- [ ] Interview can be completed and ended
-- [ ] Final scorecard renders with evidence-based feedback
-- [ ] No API secrets present in the built extension bundle (tripwire check passes)
-- [ ] A temporary WebSocket disconnect is recovered from without losing session state
+- [x] Extension + backend run locally per README — verified from a clean checkout (Feature 16)
+- [x] Supported LeetCode problem opens and is detected — verified live against 3 real problems (Phase 2)
+- [ ] Interview starts, persistent recording indicator visible — needs a live browser session
+- [x] Interviewer panel visible and matches the design reference — verified live (Phase 1/Phase 2)
+- [ ] Microphone speech is captured and transcribed live — needs a real mic + Deepgram key
+- [x] Meaningful code changes are detected (debounced, not per-keystroke) — verified live across 3 problems (Phase 2)
+- [ ] At least one contextually relevant AI question fires based on real speech/code — needs a real Anthropic key ("contextually relevant" isn't verifiable via the mock)
+- [ ] Interviewer is heard via ElevenLabs — needs a real ElevenLabs key
+- [x] At least one hint can be requested and received — exercised end-to-end via the mock pipeline; live-key nuance ("feels graduated") still open
+- [x] Interview can be completed and ended — exercised end-to-end (chained happy-path test)
+- [x] Final scorecard renders with evidence-based feedback — exercised end-to-end via the mock pipeline; live-key realism still open
+- [x] No API secrets present in the built extension bundle (tripwire check passes) — `scripts/check.sh`'s new secret-tripwire step (Feature 16)
+- [x] A temporary WebSocket disconnect is recovered from without losing session state — covered by resume/replay tests
