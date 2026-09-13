@@ -437,10 +437,11 @@ error                      { code: str, message: str, recoverable: bool }
 ### T. Deployment
 
 - **Responsibility:** get a working demo running reliably.
-- **Decision:** default to running both extension (loaded unpacked) and backend **locally** during the actual hackathon demo — lowest latency, no dependency on third-party hosting uptime during judging. A hosted backend (Render/Railway/Fly.io, single instance, no autoscaling needed) is an optional stretch documented in README for remote demos, not required for MVP done-ness.
-- **Files:** none required for local-only path; a `Dockerfile` for the backend is a nice-to-have if time allows, not blocking.
-- **Testing strategy:** README setup instructions themselves are the test — verified by following them on a clean checkout before calling Feature 16 done.
-- **Done when:** Feature 16 acceptance criteria met for the local path; cloud deploy is explicitly out of MVP scope (PRD §17).
+- **Decision:** default to running both extension (loaded unpacked) and backend **locally** during the actual hackathon demo — lowest latency, no dependency on third-party hosting uptime during judging. A hosted backend (VPS/Render/Cloud Run/etc., single instance, no autoscaling needed) is an optional path for remote/judge-accessible demos — see `DEPLOY.md` and Feature 17.
+- **Files (Feature 17, built):** `backend/Dockerfile` (two-stage, `uv`-based, non-root), `backend/.dockerignore`, `docker-compose.yml` (repo root, local Docker-based testing), `.github/workflows/docker-publish.yml` (builds and pushes the image to `ghcr.io/<owner>/<repo>-backend` on push to `main`, so any Docker-capable host can `docker pull` a known tag instead of rebuilding from source).
+- **Deployment-only safeguards (Feature 17, backend has none of this by default):** the WS handshake, concurrent-session count, and session duration are all optionally gated — see §U's `SESSION_SHARED_SECRETS`/`MAX_CONCURRENT_SESSIONS`/`SESSION_MAX_DURATION_SECONDS`. All three default to off; local dev and every existing test run with auth/limits disabled, unchanged from before Feature 17.
+- **Testing strategy:** README setup instructions themselves are the test — verified by following them on a clean checkout before calling Feature 16 done. The Docker image itself was verified by building, running, and hitting `/health` (see FEATURE_PROGRESS.md Feature 17) rather than assumed from the Dockerfile alone.
+- **Done when:** Feature 16 acceptance criteria met for the local path. Hosted deploy is optional stretch scope (PRD §17), tracked separately as Feature 17.
 
 ### U. Secrets/environment variables
 
@@ -460,10 +461,17 @@ BACKEND_PORT=8000
 ALLOWED_ORIGINS=chrome-extension://<dev-extension-id>,https://leetcode.com
 APP_ENV=local               # local | staging | production
 USE_MOCK_PROVIDERS=true     # forces mocks even if keys are present — safe default for local dev
+
+# Deployment-only safeguards (Feature 17) — all default to off/unlimited,
+# so this section only matters once the backend is reachable from
+# somewhere other than the developer's own machine. See DEPLOY.md.
+SESSION_SHARED_SECRETS=          # comma-separated; empty = no auth check at all (today's behaviour)
+MAX_CONCURRENT_SESSIONS=0        # 0 = unlimited; caps worst-case provider spend (concurrent sessions x duration)
+SESSION_MAX_DURATION_SECONDS=0   # 0 = unlimited; force-ends a session past this many seconds regardless of client
 ```
 
-- **Extension-side config:** only the backend WS URL (`VITE_BACKEND_WS_URL`), which is not a secret.
-- **Testing strategy:** a lint/check step (`scripts/check.sh`) greps the built extension bundle for known key prefixes/variable names as a tripwire before considering any release build "done."
+- **Extension-side config:** the backend WS URL (`VITE_BACKEND_WS_URL`) and, when `SESSION_SHARED_SECRETS` is configured on a deployed backend, a matching join code (`VITE_BACKEND_WS_TOKEN`) baked in at build time and sent as `?token=` on the WS connect URL (browsers can't set custom headers on a `WebSocket` handshake, so a query param is the only place it can go). Neither is a *provider* secret in the CLAUDE.md §7 sense (Anthropic/Deepgram/ElevenLabs/Supabase keys) — this is a join code meant to be handed to judges, not a credential that must never leave the server, so shipping it in the extension bundle is an accepted, deliberate exception.
+- **Testing strategy:** a lint/check step (`scripts/check.sh`) greps the built extension bundle for known key prefixes/variable names as a tripwire before considering any release build "done." Feature 17's own auth/capacity/duration behaviour is covered by `backend/tests/test_session_auth_and_limits.py` (handshake rejection with/without a token, capacity cap vs. resume, forced end past the duration cap).
 - **Done when:** `.env.example` exists with every variable above documented, and the bundle-grep check passes.
 
 ### V. Error handling

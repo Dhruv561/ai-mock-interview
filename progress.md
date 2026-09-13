@@ -88,6 +88,12 @@ TODO.md's Phase 6 scope was backend-only, and the extension's transcript panel w
 
 Nothing blocking. Feature 08 remains `VERIFIED` rather than `DONE` only for want of an `ANTHROPIC_API_KEY` — the interviewer loop is proven live through `MockLLMProvider`, but `AnthropicLLMProvider`'s forced tool-use path is unexercised against the real API.
 
+**Feature 19 (Backend containerization and CI/CD, renumbered from this branch's own "Feature 17" — merged into `main` 2026-09-13, well after Features 12–18 had already landed on it) — VERIFIED, backend is now live on the user's own VPS.** `backend/Dockerfile` + `docker-compose.yml` built and verified locally first; the backend now also has a judges-only auth gate (`SESSION_SHARED_SECRETS`, checked at the WS handshake before `accept()`) and two cost-control limits (`MAX_CONCURRENT_SESSIONS`, `SESSION_MAX_DURATION_SECONDS`) — all default to off, so nothing changed for local dev; covered by `backend/tests/test_session_auth_and_limits.py` (7 tests; 126/126 at the time this was built, re-verified post-merge at 204/204).
+
+Chose the user's VPS over Cloud Run/Render specifically because this backend's session state is in-memory and single-process by design (§Q) — a multi-instance PaaS risks a `session.resume` landing on the wrong instance, a real correctness risk a single VPS process doesn't have. Deployed live at `46.250.244.213:8080` (behind a new, dedicated nginx vhost — the box already runs other unrelated projects, so this was kept additive-only: one new port, one new `ufw` rule, nothing existing touched). Along the way, at the user's request: full `apt full-upgrade` (69 pending packages) + reboot, with every existing service (nginx, fail2ban, ufw, postgres, php-fpm, docker, the `landing` container, the trivia app) confirmed back up correctly before proceeding.
+
+**Verified live, not just locally:** `curl` to `/health` and a real external WebSocket client both confirm the deployment works and the auth gate is actually enforced (no/wrong token rejected, correct token connects) — from outside the box, through nginx, not just against the ASGI test client. `extension/src/manifest.ts` gained the VPS host in `host_permissions`; a judge-ready extension build (pointed at the live backend, join code baked in) was built and verified. `DEPLOY.md` (new) documents the whole thing. Remaining: Playwright screenshots for DEPLOY.md's load-unpacked section, and real provider keys on the live deployment (currently mock-only) — the latter is Features 05/08/10's gap, not this one's. Full detail in `FEATURE_PROGRESS.md` Feature 19.
+
 ## Next
 
 **Phase 7 (Feature 10) — ElevenLabs TTS.** Server-side ElevenLabs integration, streaming synthesized audio back over the WS connection for `interviewer.transcript`/`hint.response` text, plus candidate mute control. Per `TODO.md`. Note the return path now terminates in the service worker, so audio coming *back* has to cross the same `chrome.runtime` port — binary the other direction, which `portSocket.ts` does not yet handle (it only forwards text frames worker→content script, since the backend previously only sent JSON). That is the first thing Phase 7 will need to extend; see `architecture.md` §B.1.
@@ -188,6 +194,7 @@ Mirrors `FEATURE_PROGRESS.md`; see that file for full acceptance criteria and ch
 | 16 | Integration hardening and demo readiness | PLANNED | P0 |
 | 17 | Resizable interview panel | IMPLEMENTED | P2 |
 | 18 | Panel layout presets, live candidate transcript, audio level meters | IMPLEMENTED (not VERIFIED) | P1 |
+| 19 | Backend containerization and CI/CD | VERIFIED | P1 |
 
 ## Decisions log (Phase 6 addendum / transport fix)
 
