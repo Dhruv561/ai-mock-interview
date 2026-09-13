@@ -1,0 +1,19 @@
+# Runs the backend container for local Docker-based testing and as the
+# reference deployment unit for any Docker-capable host (VPS, Cloud Run,
+# Render, etc. — see DEPLOY.md). Not required for day-to-day development;
+# `scripts/dev.sh` (uv + uvicorn directly) is faster for that.
+#
+# Usage:
+#   cp .env.example backend/.env   # fill in real keys, or leave USE_MOCK_PROVIDERS=true
+#   docker compose up --build
+
+services:
+  backend:
+    build:
+      context: ./backend
+    image: ai-mock-interview-backend:local
+    env_file:
+      - backend/.env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

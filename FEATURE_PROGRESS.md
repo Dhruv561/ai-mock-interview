@@ -759,3 +759,63 @@ P0
 
 ## Next action
 Run the full vertical slice and fix blockers.
+
+---
+
+# Feature 17 — Backend containerization and CI/CD
+
+## Status
+IN_PROGRESS
+
+## Priority
+P1
+
+## started_at
+2026-09-13
+
+## Current task
+Docker image, docker-compose, and GHCR publish workflow done and verified; DEPLOY.md (load-unpacked steps + screenshots) and a deployment-auth gate are the remaining slices, not yet started.
+
+## Acceptance criteria
+- [x] backend has a Dockerfile producing a working image
+- [x] `docker compose up` runs the backend locally against `backend/.env`
+- [x] image excludes secrets/dev-only files (`.dockerignore`)
+- [x] GitHub Actions builds and pushes the image to GHCR on push to `main`
+- [ ] DEPLOY.md documents the load-unpacked extension flow with screenshots
+- [ ] DEPLOY.md documents at least one hosted-backend path (VPS/Cloud Run/etc.)
+- [ ] a minimal auth gate exists before the backend is exposed publicly (decision pending — see Known issues)
+
+## Completed
+- `backend/Dockerfile`: two-stage build (`builder` resolves deps via `uv sync --frozen` from `pyproject.toml`/`uv.lock`, `runtime` is a slim non-root image with just the venv + `app/`). No dev dependencies (pytest/ruff) or tests ship in the image.
+- `backend/.dockerignore`: excludes `.env*` (secrets never enter the build context), `.venv`, caches, `tests/`.
+- `docker-compose.yml` (repo root): single `backend` service, builds from `./backend`, `env_file: backend/.env`, publishes 8000, `HEALTHCHECK` against `/health`.
+- `.github/workflows/docker-publish.yml`: on push to `main` touching `backend/**` (or manual dispatch), builds `backend/Dockerfile` with Buildx and pushes `ghcr.io/<owner>/<repo>-backend:latest` + `:sha-<short>` using the automatic `GITHUB_TOKEN` (no secret to configure) and GHA layer caching. Image name is lowercased explicitly (GHCR rejects the mixed-case owner as-is).
+
+## Remaining
+- DEPLOY.md with load-unpacked screenshots (Playwright) — not started.
+- Decide and implement the judges-only auth approach (shared-secret query-param token was the recommendation; not yet built) before any hosted deploy goes live, since the backend currently has zero auth/origin checking (see architecture.md §Q framing — acceptable for a laptop-local demo, not for a publicly reachable URL).
+- Document the chosen hosting target (VPS/Cloud Run/etc., still undecided by the user) in DEPLOY.md once picked.
+- First real GHCR push hasn't happened yet — workflow is untested on GitHub itself (Actions requires the commit to actually land on `main`); Dockerfile/compose were verified locally instead (see Tests/checks run).
+
+## Files changed
+- `backend/Dockerfile` (new)
+- `backend/.dockerignore` (new)
+- `docker-compose.yml` (new)
+- `.github/workflows/docker-publish.yml` (new)
+
+## Tests/checks run
+- `docker build ./backend` — pass, image builds cleanly with locked deps.
+- `docker run` the built image with `USE_MOCK_PROVIDERS=true` — `/health` returns `{"status":"ok",...}`; container `HEALTHCHECK` reports `healthy`.
+- `docker compose up` (against a throwaway `.env` copied from `.env.example`, on a non-default host port to avoid colliding with the user's already-running dev backend on :8000) — container starts, `/health` reachable through the mapped port.
+- `python3 -c "import yaml; yaml.safe_load(...)"` on both the workflow and compose YAML — both parse.
+- Not run: an actual GitHub Actions execution (requires pushing to `main`), and a `docker pull` from GHCR by an external host.
+
+## Verification
+Dockerfile and compose file are verified working end-to-end locally (build → run → healthy → `/health` reachable). The GHCR publish step is verified by YAML validity and matches the documented `docker/*-action` usage pattern, but has not yet been exercised by a real GitHub Actions run — flagged above rather than claimed as done.
+
+## Known issues/blockers
+- **No backend auth exists yet.** Anyone who reaches a hosted backend URL can open a session and consume the configured LLM/STT/TTS provider credits — fine while the backend only runs on `127.0.0.1`, not fine once it's hosted publicly. User has been given options (shared-secret query-param token recommended); implementation is pending their decision on hosting target, since that determines whether this is even needed for the hackathon.
+- Hosting target itself is still undecided by the user (VPS vs. Cloud Run vs. other) — DEPLOY.md's hosted-path section depends on that choice.
+
+## Next action
+Once the user picks a hosting target (and an auth stance), write DEPLOY.md (load-unpacked steps + Playwright screenshots, plus the chosen hosted-deploy path) and, if needed, implement the shared-secret gate on `session.start` in `backend/app/websocket/interview.py` + the extension's connect flow.

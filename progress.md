@@ -78,6 +78,8 @@ TODO.md's Phase 6 scope was backend-only, and the extension's transcript panel w
 
 Nothing blocking. Feature 08 remains `VERIFIED` rather than `DONE` only for want of an `ANTHROPIC_API_KEY` — the interviewer loop is proven live through `MockLLMProvider`, but `AnthropicLLMProvider`'s forced tool-use path is unexercised against the real API.
 
+**Feature 17 (Backend containerization and CI/CD) — started, side-track from the phase sequence above, driven by hackathon deployment needs.** `backend/Dockerfile` + `docker-compose.yml` built and verified locally (image builds, container runs, `/health` reachable, `HEALTHCHECK` reports healthy); `.github/workflows/docker-publish.yml` builds and pushes the image to GHCR on push to `main` (untested on GitHub itself pending an actual push). Remaining: DEPLOY.md with load-unpacked screenshots, the user's hosting-target decision (VPS vs. Cloud Run vs. other), and a judges-only auth gate — the backend currently has **no auth or origin checking at all**, fine for a laptop-local demo, not fine once hosted publicly. Full detail in `FEATURE_PROGRESS.md` Feature 17.
+
 ## Next
 
 **Phase 7 (Feature 10) — ElevenLabs TTS.** Server-side ElevenLabs integration, streaming synthesized audio back over the WS connection for `interviewer.transcript`/`hint.response` text, plus candidate mute control. Per `TODO.md`. Note the return path now terminates in the service worker, so audio coming *back* has to cross the same `chrome.runtime` port — binary the other direction, which `portSocket.ts` does not yet handle (it only forwards text frames worker→content script, since the backend previously only sent JSON). That is the first thing Phase 7 will need to extend; see `architecture.md` §B.1.

@@ -1,0 +1,71 @@
+# Builds the backend Docker image (backend/Dockerfile) and publishes it to
+# the GitHub Container Registry on every push to main that touches the
+# backend, so a deploy target (VPS, Cloud Run, etc. — see DEPLOY.md) can
+# just `docker pull` a known tag instead of rebuilding from source.
+#
+# Auth: uses the automatic GITHUB_TOKEN (no PAT/secret to configure) with
+# `packages: write` permission below. The published package inherits the
+# repo's visibility settings; make it public under
+# https://github.com/<owner>/<repo>/pkgs/container/<repo>-backend/settings
+# if you want to `docker pull` it without logging in on the deploy host.
+
+name: Build and publish backend image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/docker-publish.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Compute lowercase image name
+        id: image
+        # GHCR requires an all-lowercase path; github.repository preserves
+        # the owner/repo's actual case, so it can't be used directly.
+        run: |
+          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}-backend" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags/labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
