@@ -1,7 +1,11 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 
 import app.websocket.interview as ws_module
-from app.interview.schemas import FinalReview
+from app.config import get_settings
+from app.interview.actions import InterviewerAction
+from app.interview.schemas import FinalReview, ProblemInfo
 from app.interview.state import TranscriptEntry
 from app.main import app
 
@@ -126,11 +130,53 @@ def test_audio_chunks_reach_the_mock_stt_session():
 
         ws.send_bytes(b"fake-opus-bytes-1")
         ws.send_bytes(b"fake-opus-bytes-2")
+        # The WS receive loop processes messages strictly in order, so
+        # waiting for a reply to this next message guarantees both audio
+        # frames above were already handled — needed because the ASGI app
+        # runs on a background thread and send_bytes doesn't itself block
+        # until the server has processed it.
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        error = ws.receive_json()
+        assert error["code"] == "session_not_found"
+
+        # Checked while still connected: on disconnect the STT session is
+        # now closed (Feature 20 cleanup — see
+        # _close_stt_session_on_disconnect), so this must be observed
+        # before the `with` block exits, not after.
+        record = ws_module.sessions.get(session_id)
+        assert record is not None
+        assert record.stt_session is not None
+        assert record.stt_session.chunks_received == 2
+
+    # Feature 20 cleanup: the STT session is closed once the client
+    # actually disconnects, rather than being leaked open for the rest of
+    # the session's grace window (see _close_stt_session_on_disconnect).
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.stt_session is None
+
+
+def test_resume_reopens_stt_session_closed_by_the_previous_disconnect():
+    """A disconnect closes the STT session (see the test above); a
+    resumed connection must transcribe again rather than silently losing
+    STT for the rest of the interview (Feature 20 cleanup)."""
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state
 
     record = ws_module.sessions.get(session_id)
     assert record is not None
-    assert record.stt_session is not None
-    assert record.stt_session.chunks_received == 2
+    assert record.stt_session is None  # closed by the disconnect above
+
+    with client.websocket_connect("/ws/interview") as ws2:
+        ws2.send_json({"type": "session.resume", "session_id": session_id, "last_seq": 0})
+        ws2.receive_json()  # session.started replay
+
+        record = ws_module.sessions.get(session_id)
+        assert record is not None
+        assert record.stt_session is not None
 
 
 def test_dev_simulate_transcript_produces_partial_then_final():
@@ -665,6 +711,102 @@ def test_cooldown_prevents_a_second_interviewer_response_immediately_after_the_f
     assert record is not None
     # only the first code.update's question was ever recorded
     assert len(record.state.recent_interviewer_actions) == 1
+
+
+def test_is_candidate_speaking_blocks_the_interviewer_from_talking_over_them():
+    """architecture.md §L rule 1 ("never speak while the candidate is
+    mid-utterance") — regression test for the wiring gap where
+    `can_speak`'s `is_candidate_speaking` parameter existed and was
+    unit-tested directly (test_interview_controller.py) but had no writer
+    anywhere in the WS layer (Feature 20 cleanup)."""
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        record = ws_module.sessions.get(session_id)
+        assert record is not None
+        record.is_candidate_speaking = True
+
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        # proven silent the same way the cooldown tests above do: send
+        # something with a real, distinguishable response and check that
+        # arrives next, not a stray interviewer.transcript.
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        next_message = ws.receive_json()
+        assert next_message["code"] == "session_not_found"
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert not record.state.recent_interviewer_actions  # never spoke while "speaking"
+
+
+def test_dev_simulate_transcript_clears_is_candidate_speaking_before_speaking():
+    """The mock-mode dev.simulate_transcript stand-in must mirror a real
+    STT provider's on_partial(True)/on_final(False) around its own
+    synthetic partial+final pair, otherwise the interviewer would never be
+    able to speak at all in mock-mode local dev (Feature 20 cleanup)."""
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        ws.send_json({"type": "dev.simulate_transcript", "text": "I'd use a hash map."})
+        ws.receive_json()  # transcript.partial
+        ws.receive_json()  # transcript.final
+        reply = ws.receive_json()
+        assert reply["type"] == "interviewer.transcript"
+
+    record = ws_module.sessions.get(session_id)
+    assert record is not None
+    assert record.is_candidate_speaking is False
+
+
+async def test_maybe_speak_lock_prevents_concurrent_double_speak(monkeypatch):
+    """Regression test for the race described in _maybe_speak's docstring:
+    two near-simultaneous triggers on the same session (e.g. code.update
+    racing a real STT provider's on_final callback) must not both pass
+    can_speak's cooldown gate before either has written back. Exercised
+    directly against `_maybe_speak` (bypassing the WS transport) since
+    TestClient's synchronous style can't otherwise force two calls to
+    genuinely interleave (Feature 20 cleanup)."""
+    problem = ProblemInfo(**PROBLEM)
+    record = ws_module.sessions.create(problem, "python", started_at=0.0)
+    settings = get_settings()
+
+    release = asyncio.Event()
+
+    class SlowLLMProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def propose_action(self, system_prompt: str, user_prompt: str) -> InterviewerAction:
+            self.calls += 1
+            await release.wait()
+            return InterviewerAction(action="ask_question", message=f"Question {self.calls}?")
+
+    provider = SlowLLMProvider()
+    record.llm_provider = provider
+
+    task_a = asyncio.create_task(ws_module._maybe_speak(record, settings, trigger="code_update"))
+    task_b = asyncio.create_task(ws_module._maybe_speak(record, settings, trigger="code_update"))
+    await asyncio.sleep(0)  # let task_a claim the lock and reach the LLM await
+    release.set()
+    await asyncio.gather(task_a, task_b)
+
+    # Without the lock, both tasks would pass can_speak before either wrote
+    # back, both would call the LLM, and both distinct messages would be
+    # accepted (accept_proposal's fingerprint dedup only catches identical
+    # text). With the lock, task_b's own can_speak check runs only after
+    # task_a's full turn completes and is correctly rejected by cooldown.
+    assert provider.calls == 1
+    assert len(record.state.recent_interviewer_actions) == 1
+
+    ws_module.sessions.remove(record.session_id)
 
 
 def test_accepted_action_with_rubric_updates_emits_rubric_updated_event():

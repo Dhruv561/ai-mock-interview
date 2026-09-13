@@ -22,20 +22,27 @@ and needs no sync-to-async adapter layer.
 One `PostgresRepository` is constructed per interview session
 (websocket/interview.py resolves it once via `get_repository(settings)`
 at session.start and stores it on the SessionRecord — the same lifecycle
-as one `STTSession` per session, not one per event). Each instance lazily
-opens its own small connection pool on first use rather than eagerly in
-`__init__`, so constructing the repository never blocks or fails just
-because a database happens to be briefly unreachable at session-start
-time — the first actual write is what would surface a connection failure,
-and every call site in websocket/interview.py already wraps persistence
-calls in a logged-and-swallowed fire-and-forget task, so a failed connect
-degrades the same way a failed write would (the interview continues,
-nothing is persisted for that session). A pool (not a single Connection)
-is used even though calls are one-per-session-at-a-time in practice,
-because asyncpg Connections aren't safe for concurrent queries and this
-repository's writes are fired concurrently (websocket/interview.py never
-awaits a persistence write before continuing) — a small pool (`min_size=1,
-max_size=4`) absorbs that without serializing on a lock.
+as one `STTSession` per session, not one per event), but every instance
+shares one module-level connection pool (Feature 20 cleanup), the same
+pattern `InMemoryRepository` already uses for its module-level `_STORE`:
+without this, N concurrent sessions would each lazily open their own
+`min_size=1, max_size=4` pool and never close it (nothing in
+websocket/interview.py closed a per-session pool on disconnect/expiry),
+so connections against the real database grew unboundedly with session
+count instead of staying bounded by one pool's `max_size`. The pool is
+still opened lazily on first use rather than eagerly in `__init__`, so
+constructing a repository never blocks or fails just because a database
+happens to be briefly unreachable at session-start time — the first
+actual write is what would surface a connection failure, and every call
+site in websocket/interview.py already wraps persistence calls in a
+logged-and-swallowed fire-and-forget task, so a failed connect degrades
+the same way a failed write would (the interview continues, nothing is
+persisted for that session). A pool (not a single Connection) is used
+because asyncpg Connections aren't safe for concurrent queries and
+writes across different sessions are fired concurrently (websocket/
+interview.py never awaits a persistence write before continuing) — a
+small shared pool (`min_size=1, max_size=4`) absorbs that without
+serializing on a lock.
 """
 
 from __future__ import annotations
@@ -47,6 +54,23 @@ from typing import Any
 import asyncpg
 
 from app.interview.schemas import FinalReview, ProblemInfo
+
+# Module-level, shared by every PostgresRepository instance regardless of
+# which session constructed it — see the module docstring above. Guarded
+# by `_pool_lock` (double-checked locking) so two sessions racing to
+# resolve the pool for the first time can't each start their own
+# `asyncpg.create_pool` call.
+_pool: asyncpg.Pool | None = None
+_pool_lock = asyncio.Lock()
+
+
+async def _get_shared_pool(database_url: str) -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        async with _pool_lock:
+            if _pool is None:  # re-check: another task may have won the race
+                _pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)
+    return _pool
 
 _CREATE_SESSION_SQL = """
 INSERT INTO interview_sessions (id, problem, language, started_at, status, events, final_review)
@@ -76,17 +100,9 @@ WHERE id = $1
 class PostgresRepository:
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
-        self._pool: asyncpg.Pool | None = None
-        self._pool_lock = asyncio.Lock()
 
     async def _get_pool(self) -> asyncpg.Pool:
-        if self._pool is None:
-            async with self._pool_lock:
-                if self._pool is None:  # re-check: another task may have won the race
-                    self._pool = await asyncpg.create_pool(
-                        self._database_url, min_size=1, max_size=4
-                    )
-        return self._pool
+        return await _get_shared_pool(self._database_url)
 
     async def create_session(
         self, session_id: str, problem: ProblemInfo, language: str, started_at: float

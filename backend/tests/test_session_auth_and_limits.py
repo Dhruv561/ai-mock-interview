@@ -1,4 +1,4 @@
-"""Feature 17 deployment-only safeguards: shared-secret auth at the
+"""Feature 19 deployment-only safeguards: shared-secret auth at the
 WebSocket handshake, a concurrent-session cap, and a hard session-duration
 cap. All three default to off (see app/config.py) so these tests exercise
 them by overriding `Settings` per-test, the same pattern already used in
