@@ -15,6 +15,7 @@
 // script (networking/websocket.ts), which survives eviction.
 import {
   INTERVIEW_PORT_NAME,
+  arrayBufferToBase64,
   base64ToArrayBuffer,
   type PortCommand,
   type PortUpdate,
@@ -46,10 +47,16 @@ chrome.runtime.onConnect.addListener((port) => {
           ws.binaryType = "arraybuffer";
           ws.addEventListener("open", () => post({ kind: "open" }));
           ws.addEventListener("message", (event) => {
-            // The backend only sends JSON text frames; anything binary is
-            // not part of the event contract and is ignored rather than
-            // silently mangled into a string.
-            if (typeof event.data === "string") post({ kind: "message", data: event.data });
+            // JSON control events arrive as text frames; interviewer TTS
+            // audio (architecture.md §M) arrives as raw binary frames
+            // (ws.binaryType = "arraybuffer" below) — base64-encode those
+            // for the port, which is JSON-only, same as the reverse
+            // candidate-mic-audio path in portSocket.ts's send().
+            if (typeof event.data === "string") {
+              post({ kind: "message", data: event.data });
+            } else if (event.data instanceof ArrayBuffer) {
+              post({ kind: "audio", base64: arrayBufferToBase64(event.data) });
+            }
           });
           ws.addEventListener("error", () => post({ kind: "error" }));
           ws.addEventListener("close", (event) => post({ kind: "close", code: event.code }));

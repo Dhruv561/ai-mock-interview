@@ -38,6 +38,14 @@ export interface InterviewSocket {
    */
   sendAudioChunk(chunk: Blob): void;
   onEvent(handler: (event: ServerEvent) => void): () => void;
+  /**
+   * Raw interviewer-TTS audio chunks (architecture.md §M) — the reverse
+   * direction of sendAudioChunk. These arrive as binary WS frames outside
+   * the JSON event/seq/replay system (per interviewer.audio.start/end's
+   * framing convention), so they're delivered on their own channel rather
+   * than through onEvent/serverEventSchema.
+   */
+  onAudioChunk(handler: (chunk: ArrayBuffer) => void): () => void;
   onStateChange(handler: (state: ConnectionState) => void): () => void;
   close(): void;
 }
@@ -77,6 +85,7 @@ export function connectInterviewSocket(
   let pendingAudio: Blob[] = [];
 
   const eventHandlers = new Set<(event: ServerEvent) => void>();
+  const audioHandlers = new Set<(chunk: ArrayBuffer) => void>();
   const stateHandlers = new Set<(state: ConnectionState) => void>();
 
   function setState(next: ConnectionState) {
@@ -110,6 +119,19 @@ export function connectInterviewSocket(
     });
 
     ws.addEventListener("message", (messageEvent) => {
+      // A real WebSocket (and PortSocket, which mirrors it) fires "message"
+      // for both JSON control events (text) and interviewer TTS audio
+      // (binary ArrayBuffer, per interviewer.audio.start/end's framing
+      // convention) — route on runtime type instead of assuming text.
+      // Previously this unconditionally JSON.parse'd messageEvent.data,
+      // which throws on an ArrayBuffer and was silently swallowed by the
+      // catch below, so a binary frame was a silent no-op rather than
+      // audio ever reaching a player.
+      if (messageEvent.data instanceof ArrayBuffer) {
+        for (const handler of audioHandlers) handler(messageEvent.data);
+        return;
+      }
+
       let parsed: unknown;
       try {
         parsed = JSON.parse(messageEvent.data as string);
@@ -183,6 +205,10 @@ export function connectInterviewSocket(
     onEvent(handler) {
       eventHandlers.add(handler);
       return () => eventHandlers.delete(handler);
+    },
+    onAudioChunk(handler) {
+      audioHandlers.add(handler);
+      return () => audioHandlers.delete(handler);
     },
     onStateChange(handler) {
       stateHandlers.add(handler);

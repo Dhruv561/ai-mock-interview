@@ -35,6 +35,7 @@ export type PortCommand =
 export type PortUpdate =
   | { kind: "open" }
   | { kind: "message"; data: string }
+  | { kind: "audio"; base64: string }
   | { kind: "error" }
   | { kind: "close"; code?: number };
 
@@ -64,6 +65,13 @@ class PortSocket implements WebSocketLike {
           break;
         case "message":
           this.emit("message", { data: update.data });
+          break;
+        case "audio":
+          // A real WebSocket fires the same "message" event for both text
+          // and binary frames, distinguished only by event.data's runtime
+          // type — mirroring that here (instead of a separate event kind)
+          // keeps this class a believable structural subset of WebSocket.
+          this.emit("message", { data: base64ToArrayBuffer(update.base64) });
           break;
         case "error":
           this.emit("error", {});

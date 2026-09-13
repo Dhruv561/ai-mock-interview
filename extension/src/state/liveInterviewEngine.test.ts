@@ -16,6 +16,7 @@ function fakeSocket() {
       handlers.add(handler);
       return () => handlers.delete(handler);
     },
+    onAudioChunk: vi.fn(() => () => {}),
     onStateChange: vi.fn(() => () => {}),
     close: vi.fn(),
   };

@@ -1,4 +1,5 @@
 import { endInterviewSession, startInterviewSession } from "../content/interviewSession";
+import { useInterviewerAudioPlayback } from "../media/useInterviewerAudioPlayback";
 import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
@@ -8,7 +9,9 @@ import { buildMockReview } from "../state/mockEngine";
 import { EndReviewButton } from "./EndReviewButton";
 import { HintButton } from "./HintButton";
 import { MicBadge } from "./MicBadge";
+import { MuteButton } from "./MuteButton";
 import { Review } from "./Review";
+import { SpeakingBadge } from "./SpeakingBadge";
 import { StageBadge } from "./StageBadge";
 import { StartScreen } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
@@ -30,6 +33,7 @@ export function InterviewPanel() {
   const socket = getInterviewSocket();
   const mic = useMicrophoneCapture(socket);
   const stage = useInterviewStage(socket);
+  const audio = useInterviewerAudioPlayback(socket);
   useLiveInterviewEngine(socket, state.elapsedSeconds, dispatch);
 
   function handleStart() {
@@ -69,9 +73,11 @@ export function InterviewPanel() {
            * See architecture.md §1 and progress.md decisions log.
            */}
           <MicBadge status={mic.status} />
+          <SpeakingBadge isSpeaking={audio.isSpeaking} />
           <StageBadge stage={stage} />
           <Transcript messages={state.messages} />
           <div className="flex gap-2 px-5 py-4">
+            <MuteButton isMuted={audio.isMuted} onClick={audio.toggleMute} />
             <HintButton
               onClick={handleHint}
               disabled={state.hints.length >= MAX_HINT_LEVEL}

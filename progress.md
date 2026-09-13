@@ -4,13 +4,13 @@ High-level project dashboard. Update after every meaningful work slice, per `CLA
 
 ---
 
-## Status: live end-to-end with real speech-to-text; privacy defect found and fixed
+## Status: ElevenLabs TTS implemented end-to-end (Feature 10), unverified live
 
 Last updated: 2026-09-13
 
-> **The stack runs for real.** Transport blocker resolved (leetcode.com's CSP — the WebSocket moved into the service worker, `architecture.md` §B.1), and real Deepgram transcription is now verified live: speech appears in the panel as `candidate` messages. Features 05 and 06 are both `DONE`.
+> **Phase 7 (ElevenLabs TTS, Feature 10) is implemented and `VERIFIED`** (not `DONE`) — the same "needs a real key" gap as Deepgram/Anthropic before them. Built as two parallel agent-driven slices against a wire contract (`interviewer.audio.start {format: "pcm_s16le_16000"}` + raw PCM binary frames + `interviewer.audio.end`) that was already typed ahead of time in `schemas.py`/`events.ts`, so backend (`providers/tts/*` + `_speak_audio` in `websocket/interview.py`) and extension (binary relay through the service worker/port, a gapless Web Audio PCM player, mute control, speaking indicator) landed with zero file overlap. All checks pass: backend 129/129 pytest + ruff clean, extension 85/85 vitest + typecheck/lint/build clean, and the built extension bundle was grepped to confirm the ElevenLabs key never reaches client code. See `FEATURE_PROGRESS.md` Feature 10 and `architecture.md` §M's "Implementation notes" for the concrete decisions. Next session: get a real `ELEVENLABS_API_KEY`, run a live interview turn, confirm playback latency is acceptable, flip Feature 10 to `DONE`, then move to **Phase 8 (hints + rubric, Features 09/11/13)**.
 >
-> **A privacy defect was found by live testing and fixed:** the microphone kept recording after the panel was torn down on SPA navigation, while the UI read `NOT STARTED`. Root cause was React never being unmounted. Fixed with layered defences and regression tests (`architecture.md` §B.2), then **verified empirically** — a three-phase test (speak before Start / during / after End) showed 0 audio frames before, 96 during, 0 after. Next session starts on **Phase 7 (ElevenLabs TTS)**.
+> **Previously:** transport blocker resolved (leetcode.com's CSP — the WebSocket moved into the service worker, `architecture.md` §B.1), and real Deepgram transcription verified live: speech appears in the panel as `candidate` messages. Features 05 and 06 are both `DONE`. A privacy defect (mic kept recording after teardown) was found and fixed, verified empirically (`architecture.md` §B.2).
 
 ## Current phase
 

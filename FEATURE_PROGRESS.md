@@ -576,27 +576,65 @@ Implement basic AST/static analysis and structured analysis output.
 # Feature 10 — ElevenLabs interviewer voice
 
 ## Status
-PLANNED
+VERIFIED (not DONE — see Verification)
 
 ## Priority
 P0
 
+## started_at
+2026-09-13
+
+## Current task
+Complete except the same category of gap as Features 05/08: no real `ELEVENLABS_API_KEY` is configured in this environment, so live latency-to-first-audio and actual voice quality are unverified.
+
 ## Acceptance criteria
-- [ ] server-side ElevenLabs integration exists
-- [ ] interviewer responses can be synthesised
-- [ ] audio can stream back to extension
-- [ ] playback starts quickly
-- [ ] playback errors are handled
-- [ ] candidate can mute/disable voice if needed
+- [x] server-side ElevenLabs integration exists
+- [x] interviewer responses can be synthesised
+- [x] audio can stream back to extension
+- [ ] playback starts quickly — needs a real `ELEVENLABS_API_KEY` to check live latency-to-first-audio; not a known code defect (the plumbing streams chunks as they arrive rather than buffering, per the design)
+- [x] playback errors are handled — TTS failures are swallowed server-side (text always still sends; `interviewer.audio.end` still closes the bracket so the client player never hangs open); the client player defensively ignores an unrecognised `format` instead of crashing
+- [x] candidate can mute/disable voice if needed — `MuteButton`/`GainNode`-based mute in the extension
 
 ## Completed
-- None yet.
+Implemented as two parallel agent-driven slices against the wire contract already typed ahead of time in `backend/app/interview/schemas.py`/`shared/events.ts` (`interviewer.audio.start {format: "pcm_s16le_16000"}` + raw PCM binary frames + `interviewer.audio.end`) — see `architecture.md` §M's "Implementation notes" for the concrete design decisions (endpoint choice, PCM format, mock bracketing, live-only audio frames, client-only mute, binary-relay design).
+
+**Backend:**
+- `backend/app/providers/tts/base.py` — `TTSProvider` Protocol, `synthesize(text) -> AsyncIterator[bytes]`.
+- `backend/app/providers/tts/mock.py` — yields no bytes; doesn't fabricate audio, mirrors `MockSTTProvider`'s honesty stance.
+- `backend/app/providers/tts/elevenlabs.py` — real provider against ElevenLabs' WebSocket streaming-input API (`stream-input?model_id=eleven_turbo_v2_5&output_format=pcm_16000`), key sent server-side only via `xi-api-key`.
+- `backend/app/providers/tts/__init__.py` — `get_tts_provider(settings)` factory, mock if `use_mock_providers` or missing key/voice id, mirrors `get_stt_provider` exactly.
+- `backend/app/websocket/interview.py` — new `_speak_audio(record, settings, text)`, called after each of `_maybe_speak`'s three branches (ask_question, give_hint, transition_stage's message); brackets synthesis with `interviewer.audio.start`/`.end` unconditionally (even zero-byte mock output), streams PCM chunks as live-only binary frames (bypassing the JSON ring buffer/replay), and swallows any TTS exception so a dead ElevenLabs connection can never block the interview (`interviewer.transcript`/`hint.response` text always lands regardless).
+
+**Extension:**
+- `extension/src/media/interviewerAudioPlayer.ts` — framework-agnostic Web Audio PCM player (injectable `AudioContext` factory, same testability convention as `microphone.ts`): schedules `AudioBufferSourceNode`s back-to-back via a `nextStartTime` cursor for gapless playback, mutes via a `GainNode` (gain 0/1, doesn't unschedule), stops all active sources cleanly on an interrupting new utterance, and drives an `onSpeakingChange` callback off each source's `onended`.
+- `extension/src/media/useInterviewerAudioPlayback.ts` — hook wiring `InterviewSocket.onEvent`/`onAudioChunk` to the player, surfacing `isSpeaking`/`isMuted`/`toggleMute`.
+- `extension/src/components/{SpeakingBadge,MuteButton}.tsx` — small indicator/control matching `MicBadge`'s dot+uppercase-mono-label convention; wired into `InterviewPanel.tsx`.
+- `extension/src/background/index.ts` — the service worker's `ws.addEventListener("message", ...)` now branches on `typeof event.data`: text frames unchanged, `ArrayBuffer` frames base64-encoded and posted as a new `{kind:"audio"}` `PortUpdate` (previously silently dropped — the comment said "anything binary is not part of the event contract and is ignored", which was true before this feature and is no longer).
+- `extension/src/networking/portSocket.ts` — the new `PortUpdate.audio` variant is decoded back to an `ArrayBuffer` and re-emitted through the existing `"message"` event (not a new event kind) — matches how a real `WebSocket` fires one `message` event for both frame types, distinguished by `event.data`'s runtime type.
+- `extension/src/networking/websocket.ts` — the message handler checks `messageEvent.data instanceof ArrayBuffer` before `JSON.parse` (confirmed the prior code's mishandling was silently swallowed by its own try/catch, not previously visible as a bug); added `onAudioChunk` to `InterviewSocket`, parallel to `onEvent`, never touching `serverEventSchema`/seq tracking (binary frames aren't replayed, matching the backend's live-only design).
 
 ## Remaining
-- All implementation work.
+- The one live check noted above (real key + perceived latency), same class of gap as Features 05/08 — not a known code defect.
+
+## Files changed
+- `backend/app/providers/tts/{base,mock,elevenlabs,__init__}.py`, `backend/app/websocket/interview.py`, `backend/tests/{test_tts_providers,test_interviewer_audio,test_websocket_interview}.py`
+- `extension/src/media/{interviewerAudioPlayer,interviewerAudioPlayer.test,useInterviewerAudioPlayback,useInterviewerAudioPlayback.test}.ts`, `extension/src/components/{SpeakingBadge,SpeakingBadge.test,MuteButton,MuteButton.test,InterviewPanel}.tsx`, `extension/src/background/index.ts`, `extension/src/networking/{portSocket,websocket}.ts`, three existing fake-socket test helpers updated for the extended `InterviewSocket` interface
+- `architecture.md`, `FEATURE_PROGRESS.md`, `progress.md`, `TODO.md`
+
+## Tests/checks run
+- `uv run ruff check .` (backend) — all checks passed.
+- `uv run pytest -q` (backend) — 129 passed.
+- `npm run --workspace extension test` — 16 files, 85 tests passed.
+- `npm run --workspace extension typecheck` — clean.
+- `npm run --workspace extension lint` — clean (one pre-existing, unrelated warning in `state/interviewStore.tsx`).
+- `npm run --workspace extension build` — succeeds.
+- Secret tripwire: grepped the built `extension/dist` bundle for `ELEVENLABS_API_KEY`/`xi-api-key` — zero matches, confirming the key never reaches client code.
+
+## Known issues/blockers
+None beyond the live-key gap above.
 
 ## Next action
-Create TTS provider interface and ElevenLabs adapter.
+Whenever a real `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` become available: run a real interview turn, confirm audio actually plays with acceptable latency-to-first-chunk, then flip this to `DONE` (same pattern as Feature 05's Deepgram verification).
 
 ---
 

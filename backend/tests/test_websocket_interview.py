@@ -297,6 +297,10 @@ def test_hint_requested_bypasses_cooldown_but_is_still_capped_at_level_3():
             ws.send_json({"type": "hint.requested"})
             reply = ws.receive_json()
             assert reply["type"] == "hint.response"
+            # Feature 10: every hint.response is bracketed by a (mock, in
+            # this test run) TTS audio stream — see test_interviewer_audio.py
+            assert ws.receive_json()["type"] == "interviewer.audio.start"
+            assert ws.receive_json()["type"] == "interviewer.audio.end"
 
         # a fourth is silently refused — no fourth message on the wire.
         # prove it by sending something with a real response and checking
@@ -323,6 +327,10 @@ def test_cooldown_prevents_a_second_interviewer_response_immediately_after_the_f
         )
         first_reply = ws.receive_json()
         assert first_reply["type"] == "interviewer.transcript"
+        # Feature 10: the reply is bracketed by a (mock, in this test run)
+        # TTS audio stream — see test_interviewer_audio.py
+        assert ws.receive_json()["type"] == "interviewer.audio.start"
+        assert ws.receive_json()["type"] == "interviewer.audio.end"
 
         # immediately triggering again is within the cooldown window — no
         # second interviewer.transcript arrives; prove it the same way as

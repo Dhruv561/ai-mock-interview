@@ -37,6 +37,8 @@ from app.interview.schemas import (
     ErrorEvent,
     HintRequestedEvent,
     HintResponseEvent,
+    InterviewerAudioEndEvent,
+    InterviewerAudioStartEvent,
     InterviewerStateEvent,
     InterviewerTranscriptEvent,
     ProblemInfo,
@@ -51,6 +53,7 @@ from app.interview.state import InterviewState, TranscriptEntry
 from app.providers.llm import get_llm_provider
 from app.providers.stt import get_stt_provider
 from app.providers.stt.base import STTSession
+from app.providers.tts import get_tts_provider
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +138,58 @@ async def _send_error(ws: WebSocket, seq: int, code: str, message: str, recovera
     await ws.send_json(event.model_dump())
 
 
+async def _speak_audio(record: SessionRecord, settings: Settings, text: str) -> None:
+    """Synthesizes `text` to speech and streams it to the client, per the
+    wire contract in architecture.md §M: interviewer.audio.start, zero or
+    more raw PCM binary frames, interviewer.audio.end.
+
+    Best-effort and purely additive — the interviewer's text has already
+    been emitted by the caller before this is ever called. Any failure
+    here (provider unreachable, key revoked, stream drops mid-utterance)
+    is logged and swallowed; it must never raise out of here and disrupt
+    the interview session (architecture.md §M risk: "TTS failure must not
+    block the interview").
+
+    Design choice: interviewer.audio.start/end always bracket the attempt,
+    even when the provider yields zero chunks (the mock provider, or a
+    real provider call that fails before producing any audio). This keeps
+    exactly one code path on the client — open a player on start, feed it
+    whatever binary frames arrive (maybe none), close it on end — rather
+    than needing a second case for "no audio was even attempted for this
+    utterance."
+
+    Binary frames are sent directly on record.active_ws, bypassing _emit's
+    ring buffer/replay (same as the existing candidate-to-server mic audio
+    path): audio is live-only, and a client that reconnects mid-utterance
+    simply misses whatever audio it already missed, which is acceptable
+    per architecture.md §M's own risk note.
+
+    Mute is a client-only concern (architecture.md §M / §G describe
+    playback, with no server-side mute event in the typed contract) — the
+    server keeps synthesizing and sending regardless of client-side UI
+    state, same as other client-only toggles elsewhere in this codebase.
+    """
+    started = False
+    try:
+        provider = get_tts_provider(settings)
+        start_event = InterviewerAudioStartEvent(seq=0, format="pcm_s16le_16000")
+        await _emit(record, start_event.model_dump())
+        started = True
+
+        async for chunk in provider.synthesize(text):
+            ws = record.active_ws
+            if ws is not None and ws.client_state == WebSocketState.CONNECTED:
+                try:
+                    await ws.send_bytes(chunk)
+                except RuntimeError:
+                    pass  # connection dropped mid-stream; drop this chunk and continue
+    except Exception:
+        logger.exception("TTS synthesis failed; continuing with text-only interviewer response")
+    finally:
+        if started:
+            await _emit(record, InterviewerAudioEndEvent(seq=0).model_dump())
+
+
 async def _maybe_speak(
     record: SessionRecord,
     settings: Settings,
@@ -163,12 +218,14 @@ async def _maybe_speak(
         record.state.transcript.append(entry)
         event = InterviewerTranscriptEvent(seq=0, text=accepted.message)
         await _emit(record, event.model_dump())
+        await _speak_audio(record, settings, accepted.message)
 
     elif accepted.action == "give_hint" and accepted.message:
         level = record.state.hint_level
         record.state.recent_interviewer_actions.append(f"hint (level {level}): {accepted.message}")
         event = HintResponseEvent(seq=0, level=level, text=accepted.message)
         await _emit(record, event.model_dump())
+        await _speak_audio(record, settings, accepted.message)
 
     elif accepted.action == "transition_stage":
         stage_event = InterviewerStateEvent(seq=0, stage=record.state.stage)
@@ -178,6 +235,7 @@ async def _maybe_speak(
             record.state.transcript.append(entry)
             transcript_event = InterviewerTranscriptEvent(seq=0, text=accepted.message)
             await _emit(record, transcript_event.model_dump())
+            await _speak_audio(record, settings, accepted.message)
 
 
 def _make_transcript_callbacks(session_id: str, settings: Settings):

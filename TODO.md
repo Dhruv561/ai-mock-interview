@@ -76,10 +76,10 @@ Phases follow PRD.md §18's suggested build order, sequenced as vertical slices 
 
 ## Phase 7 — ElevenLabs TTS (Feature 10)
 
-- [ ] `providers/tts/base.py`, `mock.py`, `elevenlabs.py`
-- [ ] Streaming audio relay over WS (`interviewer.audio.start/end` + binary frames)
-- [ ] Client-side `AudioContext` chunk player
-- [ ] Failure-path manual test: kill the key, confirm text still appears
+- [x] `providers/tts/base.py`, `mock.py`, `elevenlabs.py`
+- [x] Streaming audio relay over WS (`interviewer.audio.start/end` + binary frames)
+- [x] Client-side `AudioContext` chunk player
+- [ ] Failure-path manual test: kill the key, confirm text still appears — needs a real key to "kill"; the mock provider already exercises the zero-audio path, and TTS exceptions are caught server-side, but a live real→dead-key transition hasn't been run
 
 ## Phase 8 — Hints + rubric (Feature 09, 11, 13)
 

@@ -11,6 +11,7 @@ function fakeSocket(): InterviewSocket {
     send: vi.fn(),
     sendAudioChunk: vi.fn(),
     onEvent: vi.fn(() => () => {}),
+    onAudioChunk: vi.fn(() => () => {}),
     onStateChange: vi.fn(() => () => {}),
     close: vi.fn(),
   };
