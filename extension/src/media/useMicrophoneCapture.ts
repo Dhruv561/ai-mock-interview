@@ -32,7 +32,12 @@ export function useMicrophoneCapture(socket: InterviewSocket) {
     setStatus("idle");
   }, []);
 
-  const start = useCallback(async () => {
+  // Returns the resulting status so callers can gate on the outcome
+  // synchronously (PRD §14: "prevent starting the interview if audio is
+  // essential") without relying on reading `status` right after awaiting
+  // start() — that would race React's state update, since this is called
+  // from a plain event handler, not an effect.
+  const start = useCallback(async (): Promise<MicStatus> => {
     // Starting twice would strand the first recorder; stop it first so the
     // invariant "at most one capture" holds here too.
     if (captureRef.current) stop();
@@ -46,28 +51,29 @@ export function useMicrophoneCapture(socket: InterviewSocket) {
       // Stopped or unmounted while the permission prompt was open. Release
       // the mic immediately rather than starting a recorder nobody owns.
       if (stream) for (const track of stream.getTracks()) track.stop();
-      return;
+      return "idle";
     }
 
     if (!stream) {
       setStatus("denied");
-      return;
+      return "denied";
     }
 
     const capture = startMicrophoneCapture(stream, (chunk) => socket.sendAudioChunk(chunk));
     if (!capture) {
       setStatus("unsupported");
-      return;
+      return "unsupported";
     }
 
     if (generation !== generationRef.current) {
       // Lost the race in the narrow window after the stream resolved.
       capture.stop();
-      return;
+      return "idle";
     }
 
     captureRef.current = capture;
     setStatus("active");
+    return "active";
   }, [socket, stop]);
 
   // The mic must never outlive the component that shows it is recording.

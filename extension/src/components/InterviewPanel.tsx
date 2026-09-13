@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { endInterviewSession, startInterviewSession } from "../content/interviewSession";
 import { useInterviewerAudioPlayback } from "../media/useInterviewerAudioPlayback";
 import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
@@ -14,7 +15,7 @@ import { Review } from "./Review";
 import { ScreenBadge } from "./ScreenBadge";
 import { SpeakingBadge } from "./SpeakingBadge";
 import { StageBadge } from "./StageBadge";
-import { StartScreen } from "./StartScreen";
+import { StartScreen, type MicBlockedReason } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
 import { Transcript } from "./Transcript";
 
@@ -36,10 +37,21 @@ export function InterviewPanel() {
   const stage = useInterviewStage(socket);
   const audio = useInterviewerAudioPlayback(socket);
   useLiveInterviewEngine(socket, state.elapsedSeconds, dispatch);
+  const [micBlockedReason, setMicBlockedReason] = useState<MicBlockedReason | null>(null);
 
-  function handleStart() {
+  // Mic is required in the MVP's only mode (PRD §14, architecture.md §V):
+  // "show a clear message and prevent starting the interview if audio is
+  // essential." Screen capture stays best-effort/non-blocking (genuinely
+  // optional — architecture.md §F/§V), so it's only started once the mic
+  // gate has actually passed, not in parallel with it.
+  async function handleStart() {
+    setMicBlockedReason(null);
+    const result = await mic.start();
+    if (result !== "active") {
+      setMicBlockedReason(result === "unsupported" ? "unsupported" : "denied");
+      return;
+    }
     dispatch({ type: "session/start" });
-    void mic.start();
     void screenCapture.start();
     void startInterviewSession();
   }
@@ -64,7 +76,9 @@ export function InterviewPanel() {
     <div className="flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink">
       <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
 
-      {state.status === "idle" && <StartScreen onStart={handleStart} />}
+      {state.status === "idle" && (
+        <StartScreen onStart={handleStart} micBlockedReason={micBlockedReason ?? undefined} />
+      )}
 
       {(state.status === "recording" || state.status === "paused") && (
         <>

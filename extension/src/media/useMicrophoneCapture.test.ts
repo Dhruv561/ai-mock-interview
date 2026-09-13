@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InterviewSocket } from "../networking/websocket";
 import * as microphone from "./microphone";
-import { useMicrophoneCapture } from "./useMicrophoneCapture";
+import { useMicrophoneCapture, type MicStatus } from "./useMicrophoneCapture";
 
 vi.mock("./microphone");
 
@@ -31,11 +31,17 @@ describe("useMicrophoneCapture", () => {
     vi.mocked(microphone.requestMicrophoneStream).mockResolvedValue(null);
     const { result } = renderHook(() => useMicrophoneCapture(fakeSocket()));
 
+    let resolved: MicStatus | undefined;
     await act(async () => {
-      await result.current.start();
+      resolved = await result.current.start();
     });
 
     expect(result.current.status).toBe("denied");
+    // Feature 16: callers gate Start on the resolved value directly
+    // (PRD §14 "prevent starting the interview if audio is essential"),
+    // not on reading `status` right after — that would race React's
+    // state update from a plain event handler.
+    expect(resolved).toBe("denied");
   });
 
   it("goes active and forwards captured chunks to the socket", async () => {
@@ -48,11 +54,13 @@ describe("useMicrophoneCapture", () => {
     });
 
     const { result } = renderHook(() => useMicrophoneCapture(socket));
+    let resolved: MicStatus | undefined;
     await act(async () => {
-      await result.current.start();
+      resolved = await result.current.start();
     });
 
     expect(result.current.status).toBe("active");
+    expect(resolved).toBe("active");
     const chunk = new Blob(["x"]);
     onChunkCb?.(chunk);
     expect(socket.sendAudioChunk).toHaveBeenCalledWith(chunk);
@@ -63,11 +71,13 @@ describe("useMicrophoneCapture", () => {
     vi.mocked(microphone.startMicrophoneCapture).mockReturnValue(null);
     const { result } = renderHook(() => useMicrophoneCapture(fakeSocket()));
 
+    let resolved: MicStatus | undefined;
     await act(async () => {
-      await result.current.start();
+      resolved = await result.current.start();
     });
 
     expect(result.current.status).toBe("unsupported");
+    expect(resolved).toBe("unsupported");
   });
 
   it("stop() releases the capture and resets to idle", async () => {
@@ -126,7 +136,7 @@ describe("useMicrophoneCapture recording boundaries", () => {
 
     const { result } = renderHook(() => useMicrophoneCapture(fakeSocket()));
 
-    let startPromise: Promise<void>;
+    let startPromise: Promise<MicStatus>;
     act(() => {
       startPromise = result.current.start();
     });
