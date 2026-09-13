@@ -1,0 +1,23 @@
+# Standalone compose file for a VPS deployment fronted by an existing
+# nginx (see deploy/nginx/ai-mock-interview.conf and DEPLOY.md §2), rather
+# than exposing the container directly. Deliberately NOT a merge overlay on
+# top of docker-compose.yml: Compose merges list-valued keys like `ports`
+# across -f files rather than replacing them, so combining this with the
+# base file would publish *both* 0.0.0.0:8000 (base) and 127.0.0.1:8000
+# (this file) at once — silently defeating the loopback-only intent.
+# Verified empirically (`docker compose -f ... -f ... config`) before
+# picking this shape over an overlay. Use standalone:
+#
+#   docker compose -f docker-compose.vps.yml up -d --build
+#
+# The only difference from docker-compose.yml: binds to loopback only.
+services:
+  backend:
+    build:
+      context: ./backend
+    image: ai-mock-interview-backend:vps
+    env_file:
+      - backend/.env
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped

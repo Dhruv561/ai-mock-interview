@@ -36,9 +36,10 @@ ceiling to remember to raise for long-lived WebSocket connections.
   a landing page, a Laravel app, a trivia app — deployment below is
   additive and doesn't touch any of them).
 - **Path on the box:** `/opt/ai-mock-interview/` (`backend/` source +
-  `docker-compose.yml`).
-- **Container:** `backend/Dockerfile`'s image, run via `docker compose up
-  -d --build`, bound to `127.0.0.1:8000` only (not exposed directly to the
+  `docker-compose.vps.yml`, copied verbatim from the repo — not a
+  hand-edited one-off; see below).
+- **Container:** `backend/Dockerfile`'s image, run via `docker compose -f
+  docker-compose.vps.yml up -d --build`, bound to `127.0.0.1:8000` only (not exposed directly to the
   internet — nginx is the public front door, matching this box's existing
   convention for its other FastAPI app).
 - **nginx:** a dedicated vhost (`/etc/nginx/sites-available/ai-mock-interview`,
@@ -68,23 +69,45 @@ correct token connects normally.
 
 ### Reproducing this deployment on a fresh VPS
 
-```bash
-# On the VPS
-mkdir -p /opt/ai-mock-interview/backend
-# copy backend/ (excluding .venv/__pycache__/tests/.env) and docker-compose.yml there
-cp .env.example backend/.env   # then fill in SESSION_SHARED_SECRETS etc.
-cd /opt/ai-mock-interview && docker compose up -d --build
+Every file this needs is checked into the repo — nothing here depends on
+looking at what's already running on the live box:
 
-# nginx: add a server block proxying to 127.0.0.1:8000 with WS upgrade
-# headers (see /etc/nginx/sites-available/ai-mock-interview for the exact
-# one used here), then:
+- `backend/` — the app itself.
+- `docker-compose.vps.yml` — loopback-only (`127.0.0.1:8000:8000`), for
+  running behind an existing reverse proxy. **Not** the same as the root
+  `docker-compose.yml`, which binds `8000:8000` (all interfaces) for local
+  dev or a directly-exposed deployment — and deliberately a separate
+  standalone file rather than a `-f base -f override` overlay: Compose
+  merges list-valued keys like `ports` across `-f` files instead of
+  replacing them, so combining the two would have published *both*
+  bindings at once, silently defeating the loopback-only intent (verified
+  empirically with `docker compose config` before picking this shape —
+  see the comment in the file itself).
+- `deploy/nginx/ai-mock-interview.conf` — the exact vhost this deployment
+  uses, verbatim (byte-for-byte what's live on `46.250.244.213` right now).
+
+```bash
+# From your local checkout, copy what's needed to the VPS:
+rsync -a --exclude .venv --exclude __pycache__ --exclude .pytest_cache \
+      --exclude .ruff_cache --exclude .env --exclude tests \
+      backend/ root@<vps-host>:/opt/ai-mock-interview/backend/
+scp docker-compose.vps.yml root@<vps-host>:/opt/ai-mock-interview/docker-compose.vps.yml
+scp deploy/nginx/ai-mock-interview.conf \
+    root@<vps-host>:/etc/nginx/sites-available/ai-mock-interview
+
+# On the VPS:
+cp .env.example /opt/ai-mock-interview/backend/.env   # then fill in real values
+cd /opt/ai-mock-interview && docker compose -f docker-compose.vps.yml up -d --build
+
+ln -sf /etc/nginx/sites-available/ai-mock-interview /etc/nginx/sites-enabled/ai-mock-interview
 nginx -t && systemctl reload nginx
-ufw allow <chosen-port>/tcp
+ufw allow 8080/tcp   # or whichever port the vhost's `listen` uses
 ```
 
-Rolling out a code change later: re-run the copy step, then
-`docker compose up -d --build` again — `restart: unless-stopped` means it
-also survives a VPS reboot on its own.
+Rolling out a code change later: re-run the `rsync` step, then
+`docker compose -f docker-compose.vps.yml up -d --build` again —
+`restart: unless-stopped` means the container also survives a VPS reboot
+on its own without re-running anything.
 
 ## 3. Building the extension against the deployed backend
 
@@ -120,4 +143,5 @@ The live deployment currently runs with `USE_MOCK_PROVIDERS=true` (no
 Anthropic/Deepgram/ElevenLabs keys were shared into this deployment).  To
 switch to real providers: SSH in, edit `/opt/ai-mock-interview/backend/.env`
 with the real keys and `USE_MOCK_PROVIDERS=false`, then
-`docker compose restart backend` from `/opt/ai-mock-interview`.
+`docker compose -f docker-compose.vps.yml restart backend` from
+`/opt/ai-mock-interview`.
