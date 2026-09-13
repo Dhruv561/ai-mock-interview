@@ -4,8 +4,7 @@ import type { PanelBodyProps } from "./PanelBodyProps";
 
 /**
  * Most recent interviewer message, or undefined before the interviewer has
- * said anything yet. DockedPanel and FloatingPanel both derived this
- * identically inline (Feature 20 cleanup).
+ * said anything yet.
  */
 export function getLastInterviewerMessage(
   messages: TranscriptMessage[],
@@ -14,10 +13,8 @@ export function getLastInterviewerMessage(
 }
 
 /**
- * The TTS/mic useAudioLevels() pair every panel preset calls — all three
- * tap the same two analysers the same way, just lay the resulting meters
- * out differently (Feature 20 cleanup: previously duplicated verbatim in
- * DockedPanel/FloatingPanel/SplitPanel).
+ * The TTS/mic useAudioLevels() pair DockedPanel calls to drive its two
+ * level meters.
  */
 export function usePanelAudioLevels(
   props: Pick<PanelBodyProps, "getTtsAnalyser" | "isSpeaking" | "getMicAnalyser" | "micStatus">,

@@ -991,6 +991,18 @@ Load the built extension in real Chrome against a LeetCode problem page and manu
 # Feature 18 — Panel layout presets, live candidate transcript, audio level meters
 
 ## Status
+SUPERSEDED (2026-09-13) — see "Reverted" section below. The layout-preset comparison (docked/floating/split + LayoutSwitcher) this feature added was removed by explicit user request; live candidate transcript and audio level meters (this feature's other two deliverables) are unaffected and remain live in DockedPanel.
+
+## Reverted (2026-09-13)
+User asked to "delete the other UIs... go back to the UI Dhruv Verma first created before I made any commits" — i.e. before commit `6cd7312` (Joshua's first commit, "feat: add ElevenLabs interviewer voice"). Clarified scope with the user first (visual chrome only, not a full revert): keep the Convai pipeline, hints, rubric, and TTS UI all functional, but drop back to a single fixed docked panel with no layout switcher, matching Dhruv's original posture.
+
+Removed: `components/LayoutSwitcher.tsx`, `components/panels/FloatingPanel.tsx`, `components/panels/SplitPanel.tsx`, `state/panelLayout.ts`. `InterviewPanel.tsx` and `ConvaiInterviewPanel.tsx` no longer take/own a `layout` prop — both always render `DockedPanel` directly. `content/App.tsx`'s `PanelShell` (legacy pipeline's outer shell) dropped its floating-vs-docked branching and always renders the single fixed full-height right column; `ConvaiApp` was already always-docked and needed no change there. Stale doc comments referencing the removed files (`panelHelpers.ts`, `PanelBodyProps.ts`, `DockedPanel.tsx`) corrected.
+
+What's *not* reverted, deliberately: the live candidate transcript draft (`state.candidateDraft`) and both real audio level meters (mic/TTS) — these are DockedPanel features independent of the layout-switching mechanism, and the user's ask was about the layout comparison UI, not these. The Convai voice pipeline, tiered hints, and live rubric preview (Feature 21) all still run underneath the single docked panel exactly as before.
+
+Verified: `tsc --noEmit` clean, `npm run lint` clean (same one pre-existing warning), `npm run test` 153/153 passing (no test referenced the removed files), `npm run build` succeeds (163 modules vs. 172 before — confirms the dead code actually left the bundle, not just went unreferenced).
+
+## Status (as originally shipped, before the above revert)
 IMPLEMENTED (not VERIFIED — see Verification)
 
 ## Priority

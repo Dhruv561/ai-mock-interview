@@ -9,29 +9,25 @@ import { useConvaiAudioPlayback } from "../media/useConvaiAudioPlayback";
 import { useConvaiMicrophoneCapture } from "../media/useConvaiMicrophoneCapture";
 import type { ConvaiSocket } from "../networking/convaiSocket";
 import { useConvaiProgress } from "../content/convaiProgress";
-import { usePanelLayout } from "../state/panelLayout";
 import { useConvaiInterviewEngine } from "../state/convaiInterviewEngine";
 import { useInterview } from "../state/interviewStore";
 import type { EvidenceItem, RubricState } from "../state/types";
-import { LayoutSwitcher } from "./LayoutSwitcher";
 import { DockedPanel } from "./panels/DockedPanel";
-import { FloatingPanel } from "./panels/FloatingPanel";
-import { SplitPanel } from "./panels/SplitPanel";
 import type { PanelBodyProps } from "./panels/PanelBodyProps";
 import { Review } from "./Review";
 import { StartScreen, type MicBlockedReason } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
 
 /**
- * ElevenLabs Conversational AI spike's panel (see spikes/elevenlabs-convai/
- * README.md and progress.md's "Spike" section) — a parallel, opt-in
- * alternative to components/InterviewPanel.tsx, rendered instead of it
- * when VITE_USE_ELEVENLABS_CONVAI=true (content/App.tsx). Deliberately
- * reuses every visual component the real panel does (DockedPanel/
- * FloatingPanel/SplitPanel, StartScreen, Review, StatusIndicator) so the
- * comparison is about the interviewer pipeline, not the UI around it —
- * only the wiring underneath (this file, convaiSession.ts,
- * convaiInterviewEngine.ts, the media/useConvai* hooks) is pipeline-specific.
+ * ElevenLabs Conversational AI panel (see spikes/elevenlabs-convai/
+ * README.md and progress.md's "Spike" section for the original comparison
+ * this grew out of) — the default panel (content/App.tsx), rendered unless
+ * VITE_USE_LEGACY_PIPELINE=true. Reuses the same visual components as
+ * InterviewPanel.tsx (DockedPanel, StartScreen, Review, StatusIndicator) —
+ * a single fixed docked layout, no layout switcher (removed by user
+ * request 2026-09-13, see progress.md) — so only the wiring underneath
+ * (this file, convaiSession.ts, convaiInterviewEngine.ts, the media/
+ * useConvai* hooks) is pipeline-specific.
  *
  * Known gaps vs. InterviewPanel.tsx (documented, not bugs — see the spike
  * README): the live rubric here is a preview refreshed from the backend's
@@ -51,7 +47,6 @@ export function ConvaiInterviewPanel() {
   const [socket, setSocket] = useState<ConvaiSocket | null>(null);
   const mic = useConvaiMicrophoneCapture();
   const audio = useConvaiAudioPlayback(socket);
-  const { layout, setLayout } = usePanelLayout();
   const progress = useConvaiProgress();
   useConvaiInterviewEngine(socket, state.elapsedSeconds, dispatch, recordConvaiTranscriptEntry);
   const [micBlockedReason, setMicBlockedReason] = useState<MicBlockedReason | null>(null);
@@ -132,24 +127,11 @@ export function ConvaiInterviewPanel() {
     <div className="flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink">
       <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
 
-      {isActive && (
-        <div className="flex justify-end px-5 py-2">
-          <LayoutSwitcher value={layout} onChange={setLayout} />
-        </div>
-      )}
-
       {state.status === "idle" && (
         <StartScreen onStart={() => void handleStart()} micBlockedReason={micBlockedReason ?? undefined} />
       )}
 
-      {isActive &&
-        (layout === "docked" ? (
-          <DockedPanel {...panelBodyProps} />
-        ) : layout === "floating" ? (
-          <FloatingPanel {...panelBodyProps} />
-        ) : (
-          <SplitPanel {...panelBodyProps} />
-        ))}
+      {isActive && <DockedPanel {...panelBodyProps} />}
 
       {state.status === "ended" && state.review && (
         <Review review={state.review} onRestart={() => void handleStart()} />

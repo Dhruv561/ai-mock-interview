@@ -16,10 +16,12 @@ const SCREEN_STATUS_LABEL: Record<PanelBodyProps["screenStatus"], string> = {
 };
 
 /**
- * "Docked" (design ref 1a) — full presence: an interviewer avatar with a
- * live TTS level meter, the current question set large as "Last said", the
- * candidate's own live draft underneath it (with its own mic level meter),
- * and the full stage list. This is the default preset (state/panelLayout.ts).
+ * "Docked" — full presence: an interviewer avatar with a live TTS level
+ * meter, the current question set large as "Last said", the candidate's
+ * own live draft underneath it (with its own mic level meter), and the
+ * full stage list. This is the panel's only layout — the floating/split
+ * presets and the layout switcher above it were removed by user request
+ * (2026-09-13, see progress.md) in favor of this single fixed posture.
  *
  * Deliberately omitted vs. the design reference: the "Clean session / no
  * paste, no tab switch" integrity block — that would still be fabricated,

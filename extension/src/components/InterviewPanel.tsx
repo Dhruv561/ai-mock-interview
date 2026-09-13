@@ -12,13 +12,9 @@ import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
 import { useScreenCapture } from "../media/useScreenCapture";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
-import type { PanelLayout } from "../state/panelLayout";
 import { useLiveInterviewEngine } from "../state/liveInterviewEngine";
 import { useInterview } from "../state/interviewStore";
-import { LayoutSwitcher } from "./LayoutSwitcher";
 import { DockedPanel } from "./panels/DockedPanel";
-import { FloatingPanel } from "./panels/FloatingPanel";
-import { SplitPanel } from "./panels/SplitPanel";
 import type { PanelBodyProps } from "./panels/PanelBodyProps";
 import { Review } from "./Review";
 import { StartScreen, type MicBlockedReason } from "./StartScreen";
@@ -34,21 +30,14 @@ const MAX_HINT_LEVEL = 3;
  * content/interviewSession.ts), so nothing the interviewer says can arrive
  * before the candidate has actually started.
  *
- * Body rendering is a choice of three layout presets (state/panelLayout.ts,
- * Feature 18) — docked/floating/split — all reading the same real state and
- * handlers via PanelBodyProps, arranged differently per components/panels/*.
- * `layout`/`setLayout` are owned one level up (content/App.tsx) rather than
- * here, because the "floating" preset also changes the outer shell's own
- * fixed positioning (a bottom-anchored bar instead of a full-height right
- * column) — App.tsx needs the current layout to choose that shell.
+ * Body rendering is a single fixed "docked" layout (components/panels/
+ * DockedPanel.tsx) — the original full-presence posture this panel shipped
+ * with. The floating/split presets and the layout switcher that used to sit
+ * above the panel were removed by user request (2026-09-13): the pipeline
+ * work underneath (hints, rubric, TTS) stays, only the layout-comparison UI
+ * was dropped. See architecture.md/progress.md for the full record.
  */
-export function InterviewPanel({
-  layout,
-  setLayout,
-}: {
-  layout: PanelLayout;
-  setLayout: (layout: PanelLayout) => void;
-}) {
+export function InterviewPanel() {
   const { state, dispatch } = useInterview();
   const socket = getInterviewSocket();
   const mic = useMicrophoneCapture(socket);
@@ -92,9 +81,6 @@ export function InterviewPanel({
   }
 
   const isActive = state.status === "recording";
-  // Kept in sync with content/App.tsx's own isFloating check, which decides
-  // the outer shell (bottom-anchored bar vs. full-height right column).
-  const isFloatingActive = isActive && layout === "floating";
 
   const panelBodyProps: PanelBodyProps = {
     state,
@@ -113,28 +99,8 @@ export function InterviewPanel({
   };
 
   return (
-    <div
-      className={
-        isFloatingActive
-          ? "flex w-full flex-col"
-          : "flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink"
-      }
-    >
-      {/*
-       * The floating bar's own compact status row (FloatingPanel: clock,
-       * stage, audio meter) already covers what StatusIndicator shows, so
-       * skip it here rather than stacking a second, full-width status strip
-       * on top of the "minimal posture" the design intends for 1b.
-       */}
-      {!isFloatingActive && (
-        <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
-      )}
-
-      {isActive && (
-        <div className={isFloatingActive ? "flex justify-end px-3 pt-2" : "flex justify-end px-5 py-2"}>
-          <LayoutSwitcher value={layout} onChange={setLayout} />
-        </div>
-      )}
+    <div className="flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink">
+      <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
 
       {state.status === "idle" && (
         <StartScreen onStart={handleStart} micBlockedReason={micBlockedReason ?? undefined} />
@@ -145,17 +111,9 @@ export function InterviewPanel({
        * show a live "RUBRIC SO FAR" section: product decision (2026-09-12)
        * to only reveal scores on the Review screen so candidates aren't
        * watching live numbers during the interview. See architecture.md §1
-       * and progress.md decisions log — none of the three presets below
-       * restore it.
+       * and progress.md decisions log.
        */}
-      {isActive &&
-        (layout === "docked" ? (
-          <DockedPanel {...panelBodyProps} />
-        ) : layout === "floating" ? (
-          <FloatingPanel {...panelBodyProps} />
-        ) : (
-          <SplitPanel {...panelBodyProps} />
-        ))}
+      {isActive && <DockedPanel {...panelBodyProps} />}
 
       {state.status === "ended" && state.review && (
         <Review review={state.review} onRestart={handleStart} />
