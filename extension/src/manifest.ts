@@ -57,5 +57,7 @@ export default defineManifest({
     // works against either a local dev backend or the deployed one,
     // whichever VITE_BACKEND_WS_URL points at.
     "http://46.250.244.213:8080/*",
+    // OpenAI Realtime API (spike: alternative interviewer pipeline).
+    "wss://api.openai.com/*",
   ],
 });

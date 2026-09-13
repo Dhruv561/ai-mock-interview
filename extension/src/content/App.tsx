@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { InterviewPanel } from "../components/InterviewPanel";
+import { OpenAIRealtimePanel } from "../components/OpenAIRealtimePanel";
 import { PanelResizeHandle } from "../components/PanelResizeHandle";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useConnectionState } from "../networking/useConnectionState";
@@ -9,7 +10,23 @@ import { usePanelLayout } from "../state/panelLayout";
 import { usePanelWidth } from "../state/panelWidth";
 import { releasePageSpace, setPanelWidth } from "./layout";
 
+const USE_OPENAI_REALTIME = import.meta.env.VITE_USE_OPENAI_REALTIME === "true";
+
 export function App() {
+  if (USE_OPENAI_REALTIME) {
+    // OpenAI Realtime spike: simpler UI, no state machine needed
+    return (
+      <div
+        className="fixed inset-y-0 right-0 z-[2147483000] flex flex-col border-l border-panel-border bg-panel-bg"
+        style={{ width: "420px" }}
+      >
+        <div className="min-h-0 flex-1 p-4">
+          <OpenAIRealtimePanel />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <InterviewProvider>
       <PanelShell />

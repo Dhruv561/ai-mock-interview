@@ -25,6 +25,29 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[ai-mock-interview] installed");
 });
 
+// Handle HTTP requests from content scripts (bypass CSP).
+// Used by OpenAI Realtime spike to fetch ephemeral session tokens and submit reviews.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+chrome.runtime.onMessage.addListener((request: any, _sender: any, sendResponse: any) => {
+  if (request.kind === "openai-realtime-http") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { url, method, body } = request as any;
+
+    fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body,
+    })
+      .then((res) => res.json())
+      .then((data) => sendResponse(data))
+      .catch((error) => sendResponse({ error: String(error) }));
+
+    return true; // Keep the channel open for async sendResponse.
+  }
+});
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== INTERVIEW_PORT_NAME) return;
 
@@ -43,7 +66,7 @@ chrome.runtime.onConnect.addListener((port) => {
       case "open": {
         if (ws) return;
         try {
-          ws = new WebSocket(command.url);
+          ws = new WebSocket(command.url, command.protocols);
           ws.binaryType = "arraybuffer";
           ws.addEventListener("open", () => post({ kind: "open" }));
           ws.addEventListener("message", (event) => {

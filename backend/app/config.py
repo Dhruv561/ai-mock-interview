@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
 
+    # OpenAI Realtime API (spike: alternative interviewer pipeline)
+    openai_api_key: str | None = None
+    openai_realtime_model: str = "gpt-realtime-2.1"
+
     # Persistence (optional — falls back to in-memory when unset). A
     # Supabase-hosted Postgres works here too: this is a direct asyncpg
     # connection string, not the Supabase client SDK, so there is no

@@ -20,13 +20,13 @@
 // the worker is evicted the port drops, websocket.ts sees a `close`, and its
 // existing backoff opens a fresh port, which wakes the worker and replays
 // `session.resume`. The worker holds nothing worth losing.
-import type { WebSocketFactory, WebSocketLike, WebSocketLikeEvent } from "./websocket";
+import type { WebSocketLike, WebSocketLikeEvent } from "./websocket";
 
 export const INTERVIEW_PORT_NAME = "interview-socket";
 
 /** Content script → service worker. */
 export type PortCommand =
-  | { kind: "open"; url: string }
+  | { kind: "open"; url: string; protocols?: string[] }
   | { kind: "text"; data: string }
   | { kind: "binary"; base64: string }
   | { kind: "close" };
@@ -54,7 +54,7 @@ class PortSocket implements WebSocketLike {
   // in order; without it a small chunk could overtake a larger earlier one.
   private sendChain: Promise<void> = Promise.resolve();
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string[]) {
     this.port = chrome.runtime.connect({ name: INTERVIEW_PORT_NAME });
 
     this.port.onMessage.addListener((update: PortUpdate) => {
@@ -94,7 +94,7 @@ class PortSocket implements WebSocketLike {
       }
     });
 
-    this.post({ kind: "open", url });
+    this.post({ kind: "open", url, protocols });
   }
 
   send(data: string | Blob | ArrayBufferLike): void {
@@ -160,4 +160,6 @@ export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-export const portSocketFactory: WebSocketFactory = (url) => new PortSocket(url);
+export function portSocketFactory(url: string, protocols?: string[]): WebSocketLike {
+  return new PortSocket(url, protocols);
+}
