@@ -344,6 +344,42 @@ def test_cooldown_prevents_a_second_interviewer_response_immediately_after_the_f
     assert len(record.state.recent_interviewer_actions) == 1
 
 
+def test_accepted_action_with_rubric_updates_emits_rubric_updated_event():
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+
+        record = ws_module.sessions.get(session_id)
+        # jump directly into "complexity" for test setup (bypassing
+        # transition legality, same pattern as test_interview_state.py) —
+        # the mock LLM's canned complexity response carries rubric_updates.
+        record.state.stage = "complexity"
+
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        question = ws.receive_json()
+        assert question["type"] == "interviewer.transcript"
+
+        rubric_event = ws.receive_json()
+        assert rubric_event["type"] == "rubric.updated"
+        assert rubric_event["evidence"]
+        # the full current rubric dict is sent, not just the delta
+        assert set(rubric_event["rubric"].keys()) == {
+            "clarifying",
+            "approach",
+            "code_quality",
+            "complexity",
+            "communication",
+            "testing",
+        }
+        assert rubric_event["rubric"]["complexity"] == 1
+
+    assert record.state.rubric["complexity"] == 1
+
+
 def test_review_stage_never_speaks_again():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})

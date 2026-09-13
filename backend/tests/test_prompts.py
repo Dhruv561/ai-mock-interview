@@ -1,4 +1,4 @@
-from app.interview.prompts import build_system_prompt, build_user_prompt
+from app.interview.prompts import HINT_LEVEL_GUIDANCE, build_system_prompt, build_user_prompt
 from app.interview.state import InterviewState, TranscriptEntry
 
 PROBLEM = {
@@ -54,3 +54,46 @@ def test_user_prompt_lists_already_asked_actions_to_avoid_repetition():
     prompt = build_user_prompt(state)
 
     assert "What is the time complexity?" in prompt
+
+
+def test_non_hint_trigger_has_no_hint_level_requested_marker():
+    state = InterviewState(problem=PROBLEM, language="python")
+    prompt = build_user_prompt(state, trigger="code_update")
+    assert "Hint level requested:" not in prompt
+
+
+def test_hint_requested_trigger_includes_the_next_level_and_its_guidance():
+    state = InterviewState(problem=PROBLEM, language="python")
+    state.hint_level = 0
+    prompt = build_user_prompt(state, trigger="hint_requested")
+    assert "Hint level requested: 1" in prompt
+    assert HINT_LEVEL_GUIDANCE[1] in prompt
+
+
+def test_hint_requested_trigger_uses_hint_level_plus_one_not_hint_level():
+    state = InterviewState(problem=PROBLEM, language="python")
+    state.hint_level = 1
+    prompt = build_user_prompt(state, trigger="hint_requested")
+    assert "Hint level requested: 2" in prompt
+    assert HINT_LEVEL_GUIDANCE[2] in prompt
+
+
+def test_hint_requested_trigger_caps_at_max_hint_level():
+    state = InterviewState(problem=PROBLEM, language="python")
+    state.hint_level = 3  # already at the cap
+    prompt = build_user_prompt(state, trigger="hint_requested")
+    assert "Hint level requested: 3" in prompt
+    assert HINT_LEVEL_GUIDANCE[3] in prompt
+
+
+def test_hint_level_guidance_text_differs_across_all_three_levels():
+    texts = {HINT_LEVEL_GUIDANCE[1], HINT_LEVEL_GUIDANCE[2], HINT_LEVEL_GUIDANCE[3]}
+    assert len(texts) == 3
+
+
+def test_user_prompt_includes_current_rubric_scores():
+    state = InterviewState(problem=PROBLEM, language="python")
+    state.rubric["testing"] = 2
+    prompt = build_user_prompt(state)
+    assert "testing: 2" in prompt
+    assert "clarifying: 0" in prompt

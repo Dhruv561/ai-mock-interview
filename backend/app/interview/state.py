@@ -45,6 +45,18 @@ class TranscriptEntry(BaseModel):
     timestamp: float
 
 
+class RubricEvidenceEntry(BaseModel):
+    """One append-only record of a rubric change (architecture.md §O). Only
+    the categories actually touched by that change are present, each already
+    clamped to [0,3] — not the whole rubric snapshot — so history stays
+    queryable by category (e.g. "every entry that touched complexity")
+    without re-deriving what changed from consecutive full snapshots."""
+
+    categories: dict[RubricCategory, int]
+    evidence: str
+    timestamp: float
+
+
 def _empty_rubric() -> dict[RubricCategory, int]:
     return {
         "clarifying": 0,
@@ -69,6 +81,7 @@ class InterviewState(BaseModel):
     current_code: str = ""
     transcript: list[TranscriptEntry] = Field(default_factory=list)
     rubric: dict[RubricCategory, int] = Field(default_factory=_empty_rubric)
+    rubric_history: list[RubricEvidenceEntry] = Field(default_factory=list)
     hint_level: int = 0
     recent_interviewer_actions: list[str] = Field(default_factory=list)
     code_analysis_observations: list[str] = Field(default_factory=list)
