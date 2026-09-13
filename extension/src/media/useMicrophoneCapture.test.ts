@@ -50,7 +50,7 @@ describe("useMicrophoneCapture", () => {
     let onChunkCb: ((chunk: Blob) => void) | undefined;
     vi.mocked(microphone.startMicrophoneCapture).mockImplementation((_stream, onChunk) => {
       onChunkCb = onChunk;
-      return { stop: vi.fn() };
+      return { stop: vi.fn(), analyser: null };
     });
 
     const { result } = renderHook(() => useMicrophoneCapture(socket));
@@ -83,7 +83,7 @@ describe("useMicrophoneCapture", () => {
   it("stop() releases the capture and resets to idle", async () => {
     const stop = vi.fn();
     vi.mocked(microphone.requestMicrophoneStream).mockResolvedValue({} as MediaStream);
-    vi.mocked(microphone.startMicrophoneCapture).mockReturnValue({ stop });
+    vi.mocked(microphone.startMicrophoneCapture).mockReturnValue({ stop, analyser: null });
 
     const { result } = renderHook(() => useMicrophoneCapture(fakeSocket()));
     await act(async () => {
@@ -107,7 +107,7 @@ describe("useMicrophoneCapture recording boundaries", () => {
   it("stops recording when the component unmounts", async () => {
     const stop = vi.fn();
     vi.mocked(microphone.requestMicrophoneStream).mockResolvedValue({} as MediaStream);
-    vi.mocked(microphone.startMicrophoneCapture).mockReturnValue({ stop });
+    vi.mocked(microphone.startMicrophoneCapture).mockReturnValue({ stop, analyser: null });
 
     const { result, unmount } = renderHook(() => useMicrophoneCapture(fakeSocket()));
     await act(async () => {
@@ -132,7 +132,7 @@ describe("useMicrophoneCapture recording boundaries", () => {
         resolvePermission = resolve;
       }),
     );
-    vi.mocked(microphone.startMicrophoneCapture).mockReturnValue({ stop: vi.fn() });
+    vi.mocked(microphone.startMicrophoneCapture).mockReturnValue({ stop: vi.fn(), analyser: null });
 
     const { result } = renderHook(() => useMicrophoneCapture(fakeSocket()));
 
@@ -162,8 +162,8 @@ describe("useMicrophoneCapture recording boundaries", () => {
     const secondStop = vi.fn();
     vi.mocked(microphone.requestMicrophoneStream).mockResolvedValue({} as MediaStream);
     vi.mocked(microphone.startMicrophoneCapture)
-      .mockReturnValueOnce({ stop: firstStop })
-      .mockReturnValueOnce({ stop: secondStop });
+      .mockReturnValueOnce({ stop: firstStop, analyser: null })
+      .mockReturnValueOnce({ stop: secondStop, analyser: null });
 
     const { result } = renderHook(() => useMicrophoneCapture(fakeSocket()));
     await act(async () => {

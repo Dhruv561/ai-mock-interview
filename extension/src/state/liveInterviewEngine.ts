@@ -13,10 +13,13 @@ function clampHintLevel(level: number): 1 | 2 | 3 {
  * (Features 08 and 14) — replaces the scripted timeline and hardcoded
  * review that used to live in mockEngine.ts, now that the backend
  * genuinely produces interviewer.transcript/hint.response/transcript.final/
- * review.ready. transcript.partial (mid-speech) is intentionally not
- * rendered here: TranscriptMessage has no "update in place" concept, and
- * appending a new message per partial would spam near-duplicates — only
- * the finished utterance is shown.
+ * review.ready. transcript.partial (mid-speech) used to be dropped
+ * entirely (TranscriptMessage had no "update in place" concept, and
+ * appending a new message per partial would have spammed near-duplicates).
+ * It's now routed into state.candidateDraft instead — a single slot that
+ * each partial replaces rather than appends to — so the candidate sees
+ * their own speech land as they say it. transcript.final still produces
+ * the real TranscriptMessage and clears the draft (interviewReducer.ts).
  */
 export function useLiveInterviewEngine(
   socket: InterviewSocket,
@@ -96,6 +99,10 @@ export function useLiveInterviewEngine(
                 })),
               },
             });
+            break;
+
+          case "transcript.partial":
+            dispatch({ type: "candidateDraft/set", text: event.text });
             break;
 
           default:

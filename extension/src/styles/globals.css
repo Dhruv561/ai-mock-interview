@@ -23,6 +23,32 @@
   --color-accent: #2f8f5b;
   --color-accent-soft: #dcead0;
   --color-track: #e5e7e0;
+
+  /* Dark-panel variants — the docked (1a) and floating (1b) layout
+     presets use a near-black interviewer surface, where the light-panel
+     accent/ink tokens above read as too dim/dark to use directly. */
+  --color-dark-panel: #1c211d;
+  --color-dark-border: #33392f;
+  --color-dark-ink: #f1f3ec;
+  --color-dark-ink-muted: #aab3a3;
+  --color-accent-on-dark: #6fcf97;
+
+  /* One-shot entrance for a newly-appended transcript line — the "popping
+     up" feel for real-time speech/response landing. Plays once on mount;
+     an in-place text update (the candidate draft line as partials arrive)
+     does not remount the node, so it does not replay per keystroke. */
+  --animate-message-pop: message-pop 0.2s ease-out;
+}
+
+@keyframes message-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 #app-root {

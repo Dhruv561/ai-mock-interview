@@ -17,6 +17,10 @@ export type MicStatus = "idle" | "requesting" | "active" | "denied" | "unsupport
 export function useMicrophoneCapture(socket: InterviewSocket) {
   const [status, setStatus] = useState<MicStatus>("idle");
   const captureRef = useRef<MicrophoneCapture | null>(null);
+  // Read on demand (media/useAudioLevels.ts polls every frame) rather than
+  // mirrored into React state — it never changes after start() sets it, so
+  // there's nothing for a state update to usefully trigger a re-render for.
+  const getAnalyser = useCallback(() => captureRef.current?.analyser ?? null, []);
   // Bumped by every stop() and by unmount. start() captures the value it
   // began with and abandons its result if it no longer matches, which
   // closes the race where the user starts and immediately stops (or
@@ -85,5 +89,5 @@ export function useMicrophoneCapture(socket: InterviewSocket) {
     };
   }, []);
 
-  return { status, start, stop };
+  return { status, start, stop, getAnalyser };
 }

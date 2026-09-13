@@ -1,15 +1,7 @@
 import type { InterviewStage } from "../networking/useInterviewStage";
+import { STAGE_LABELS } from "./stageInfo";
 
-const LABEL: Record<InterviewStage, string> = {
-  intro: "INTRO",
-  clarification: "CLARIFYING",
-  approach: "APPROACH",
-  coding: "CODING",
-  complexity: "COMPLEXITY",
-  testing: "TESTING",
-  optimisation: "OPTIMISATION",
-  review: "REVIEW",
-};
+const LABEL = STAGE_LABELS;
 
 /** Reflects the backend's real interview stage (Feature 07). Renders nothing until the first interviewer.state event arrives. */
 export function StageBadge({ stage }: { stage: InterviewStage | null }) {

@@ -14,6 +14,7 @@ export type InterviewAction =
   | { type: "session/end" }
   | { type: "stage/set"; stage: InterviewStage }
   | { type: "message/add"; message: TranscriptMessage }
+  | { type: "candidateDraft/set"; text: string | null }
   | { type: "rubric/update"; category: RubricCategory; value: number }
   | { type: "hint/add"; hint: HintEntry }
   | { type: "review/ready"; review: FinalReview };
@@ -37,7 +38,17 @@ export function interviewReducer(
       return { ...state, stage: action.stage };
 
     case "message/add":
-      return { ...state, messages: [...state.messages, action.message] };
+      // A finished message always supersedes whatever draft was building
+      // towards it (transcript.final follows its own transcript.partial
+      // stream) — otherwise the draft would linger under the new bubble.
+      return {
+        ...state,
+        messages: [...state.messages, action.message],
+        candidateDraft: null,
+      };
+
+    case "candidateDraft/set":
+      return { ...state, candidateDraft: action.text };
 
     case "rubric/update": {
       const clamped = Math.max(0, Math.min(3, action.value));

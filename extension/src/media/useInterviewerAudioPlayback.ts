@@ -40,5 +40,5 @@ export function useInterviewerAudioPlayback(socket: InterviewSocket) {
     setIsMuted(next);
   }
 
-  return { isSpeaking, isMuted, toggleMute };
+  return { isSpeaking, isMuted, toggleMute, getAnalyser: player.getAnalyser };
 }

@@ -60,12 +60,33 @@ describe("useLiveInterviewEngine", () => {
     expect(result.current.messages[0]).toMatchObject({ speaker: "candidate", text: "I'll use a hash map" });
   });
 
-  it("does not render transcript.partial (mid-speech) as a message", () => {
+  it("routes transcript.partial into the candidate draft, not messages", () => {
     const { result, emit } = renderEngine();
 
     act(() => emit({ type: "transcript.partial", seq: 1, text: "I'll use a..." }));
 
     expect(result.current.messages).toHaveLength(0);
+    expect(result.current.candidateDraft).toBe("I'll use a...");
+  });
+
+  it("replaces the draft in place as further partials arrive", () => {
+    const { result, emit } = renderEngine();
+
+    act(() => emit({ type: "transcript.partial", seq: 1, text: "I'll use a" }));
+    act(() => emit({ type: "transcript.partial", seq: 2, text: "I'll use a hash" }));
+
+    expect(result.current.candidateDraft).toBe("I'll use a hash");
+  });
+
+  it("clears the candidate draft once transcript.final lands", () => {
+    const { result, emit } = renderEngine(20);
+
+    act(() => emit({ type: "transcript.partial", seq: 1, text: "I'll use a..." }));
+    act(() => emit({ type: "transcript.final", seq: 2, text: "I'll use a hash map", timestamp: 1.0 }));
+
+    expect(result.current.candidateDraft).toBeNull();
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({ speaker: "candidate", text: "I'll use a hash map" });
   });
 
   it("adds a hint entry and a labeled message on hint.response", () => {

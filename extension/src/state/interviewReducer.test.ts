@@ -54,6 +54,32 @@ describe("interviewReducer", () => {
     expect(tooLow.rubric.approach).toBe(0);
   });
 
+  it("candidateDraft/set replaces the in-progress candidate line", () => {
+    const withDraft = interviewReducer(INITIAL_STATE, {
+      type: "candidateDraft/set",
+      text: "I'll use a",
+    });
+    expect(withDraft.candidateDraft).toBe("I'll use a");
+
+    const replaced = interviewReducer(withDraft, {
+      type: "candidateDraft/set",
+      text: "I'll use a hash",
+    });
+    expect(replaced.candidateDraft).toBe("I'll use a hash");
+  });
+
+  it("message/add clears any in-progress candidate draft", () => {
+    const withDraft = { ...INITIAL_STATE, candidateDraft: "I'll use a..." };
+    const message: TranscriptMessage = {
+      id: "m1",
+      speaker: "candidate",
+      text: "I'll use a hash map",
+      elapsedSeconds: 4,
+    };
+    const next = interviewReducer(withDraft, { type: "message/add", message });
+    expect(next.candidateDraft).toBeNull();
+  });
+
   it("hint/add appends to the hints list", () => {
     const next = interviewReducer(INITIAL_STATE, {
       type: "hint/add",

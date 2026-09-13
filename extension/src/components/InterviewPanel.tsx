@@ -5,19 +5,17 @@ import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
 import { useScreenCapture } from "../media/useScreenCapture";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
+import { usePanelLayout } from "../state/panelLayout";
 import { useLiveInterviewEngine } from "../state/liveInterviewEngine";
 import { useInterview } from "../state/interviewStore";
-import { EndReviewButton } from "./EndReviewButton";
-import { HintButton } from "./HintButton";
-import { MicBadge } from "./MicBadge";
-import { MuteButton } from "./MuteButton";
+import { LayoutSwitcher } from "./LayoutSwitcher";
+import { DockedPanel } from "./panels/DockedPanel";
+import { FloatingPanel } from "./panels/FloatingPanel";
+import { SplitPanel } from "./panels/SplitPanel";
+import type { PanelBodyProps } from "./panels/PanelBodyProps";
 import { Review } from "./Review";
-import { ScreenBadge } from "./ScreenBadge";
-import { SpeakingBadge } from "./SpeakingBadge";
-import { StageBadge } from "./StageBadge";
 import { StartScreen, type MicBlockedReason } from "./StartScreen";
 import { StatusIndicator } from "./StatusIndicator";
-import { Transcript } from "./Transcript";
 
 const MAX_HINT_LEVEL = 3;
 
@@ -28,6 +26,10 @@ const MAX_HINT_LEVEL = 3;
  * fires from handleStart below, not automatically on page load (see
  * content/interviewSession.ts), so nothing the interviewer says can arrive
  * before the candidate has actually started.
+ *
+ * Body rendering is a choice of three layout presets (state/panelLayout.ts,
+ * Feature 18) — docked/floating/split — all reading the same real state and
+ * handlers via PanelBodyProps, arranged differently per components/panels/*.
  */
 export function InterviewPanel() {
   const { state, dispatch } = useInterview();
@@ -36,6 +38,7 @@ export function InterviewPanel() {
   const screenCapture = useScreenCapture(socket);
   const stage = useInterviewStage(socket);
   const audio = useInterviewerAudioPlayback(socket);
+  const { layout, setLayout } = usePanelLayout();
   useLiveInterviewEngine(socket, state.elapsedSeconds, dispatch);
   const [micBlockedReason, setMicBlockedReason] = useState<MicBlockedReason | null>(null);
 
@@ -72,38 +75,53 @@ export function InterviewPanel() {
     dispatch({ type: "session/end" });
   }
 
+  const isActive = state.status === "recording" || state.status === "paused";
+
+  const panelBodyProps: PanelBodyProps = {
+    state,
+    micStatus: mic.status,
+    getMicAnalyser: mic.getAnalyser,
+    screenStatus: screenCapture.status,
+    isSpeaking: audio.isSpeaking,
+    isMuted: audio.isMuted,
+    onToggleMute: audio.toggleMute,
+    getTtsAnalyser: audio.getAnalyser,
+    stage,
+    onHint: handleHint,
+    hintDisabled: state.hints.length >= MAX_HINT_LEVEL,
+    onEnd: handleEnd,
+  };
+
   return (
     <div className="flex h-full w-full flex-col bg-panel-bg font-sans text-[13px] text-ink">
       <StatusIndicator status={state.status} elapsedSeconds={state.elapsedSeconds} />
+
+      {isActive && (
+        <div className="flex justify-end px-5 py-2">
+          <LayoutSwitcher value={layout} onChange={setLayout} />
+        </div>
+      )}
 
       {state.status === "idle" && (
         <StartScreen onStart={handleStart} micBlockedReason={micBlockedReason ?? undefined} />
       )}
 
-      {(state.status === "recording" || state.status === "paused") && (
-        <>
-          {/*
-           * Deliberate deviation from PRD §3.3 / docs/ui-reference.png,
-           * which show a live "RUBRIC SO FAR" section: product decision
-           * (2026-09-12) to only reveal scores on the Review screen so
-           * candidates aren't watching live numbers during the interview.
-           * See architecture.md §1 and progress.md decisions log.
-           */}
-          <MicBadge status={mic.status} />
-          <ScreenBadge status={screenCapture.status} />
-          <SpeakingBadge isSpeaking={audio.isSpeaking} />
-          <StageBadge stage={stage} />
-          <Transcript messages={state.messages} />
-          <div className="flex gap-2 px-5 py-4">
-            <MuteButton isMuted={audio.isMuted} onClick={audio.toggleMute} />
-            <HintButton
-              onClick={handleHint}
-              disabled={state.hints.length >= MAX_HINT_LEVEL}
-            />
-            <EndReviewButton onClick={handleEnd} />
-          </div>
-        </>
-      )}
+      {/*
+       * Deliberate deviation from PRD §3.3 / docs/ui-reference.png, which
+       * show a live "RUBRIC SO FAR" section: product decision (2026-09-12)
+       * to only reveal scores on the Review screen so candidates aren't
+       * watching live numbers during the interview. See architecture.md §1
+       * and progress.md decisions log — none of the three presets below
+       * restore it.
+       */}
+      {isActive &&
+        (layout === "docked" ? (
+          <DockedPanel {...panelBodyProps} />
+        ) : layout === "floating" ? (
+          <FloatingPanel {...panelBodyProps} />
+        ) : (
+          <SplitPanel {...panelBodyProps} />
+        ))}
 
       {state.status === "ended" && state.review && (
         <Review review={state.review} onRestart={handleStart} />
