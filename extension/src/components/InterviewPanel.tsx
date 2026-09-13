@@ -1,6 +1,7 @@
 import { endInterviewSession, startInterviewSession } from "../content/interviewSession";
 import { useInterviewerAudioPlayback } from "../media/useInterviewerAudioPlayback";
 import { useMicrophoneCapture } from "../media/useMicrophoneCapture";
+import { useScreenCapture } from "../media/useScreenCapture";
 import { getInterviewSocket } from "../networking/interviewSocket";
 import { useInterviewStage } from "../networking/useInterviewStage";
 import { useLiveInterviewEngine } from "../state/liveInterviewEngine";
@@ -10,6 +11,7 @@ import { HintButton } from "./HintButton";
 import { MicBadge } from "./MicBadge";
 import { MuteButton } from "./MuteButton";
 import { Review } from "./Review";
+import { ScreenBadge } from "./ScreenBadge";
 import { SpeakingBadge } from "./SpeakingBadge";
 import { StageBadge } from "./StageBadge";
 import { StartScreen } from "./StartScreen";
@@ -30,6 +32,7 @@ export function InterviewPanel() {
   const { state, dispatch } = useInterview();
   const socket = getInterviewSocket();
   const mic = useMicrophoneCapture(socket);
+  const screenCapture = useScreenCapture(socket);
   const stage = useInterviewStage(socket);
   const audio = useInterviewerAudioPlayback(socket);
   useLiveInterviewEngine(socket, state.elapsedSeconds, dispatch);
@@ -37,6 +40,7 @@ export function InterviewPanel() {
   function handleStart() {
     dispatch({ type: "session/start" });
     void mic.start();
+    void screenCapture.start();
     void startInterviewSession();
   }
 
@@ -46,6 +50,7 @@ export function InterviewPanel() {
 
   function handleEnd() {
     mic.stop();
+    screenCapture.stop();
     socket.send({ type: "session.end" });
     endInterviewSession();
     // status flips to "ended" immediately as local UI feedback; the review
@@ -71,6 +76,7 @@ export function InterviewPanel() {
            * See architecture.md §1 and progress.md decisions log.
            */}
           <MicBadge status={mic.status} />
+          <ScreenBadge status={screenCapture.status} />
           <SpeakingBadge isSpeaking={audio.isSpeaking} />
           <StageBadge stage={stage} />
           <Transcript messages={state.messages} />
