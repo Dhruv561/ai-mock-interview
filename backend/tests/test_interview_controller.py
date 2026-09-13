@@ -1,7 +1,8 @@
 from app.interview.actions import InterviewerAction
 from app.interview.controller import (
     MAX_HINT_LEVEL,
-    MIN_COOLDOWN_SECONDS,
+    OBSERVATION_COOLDOWN_SECONDS,
+    REACTIVE_COOLDOWN_SECONDS,
     RUBRIC_SCORE_MAX,
     RUBRIC_SCORE_MIN,
     InterviewController,
@@ -33,12 +34,61 @@ def test_cannot_speak_while_candidate_is_speaking():
     assert controller.can_speak(now=0.0, is_candidate_speaking=True) is False
 
 
-def test_cooldown_blocks_speaking_until_it_elapses():
+def test_observation_cooldown_blocks_speaking_until_it_elapses():
+    """Default (is_conversational_turn=False) path — the candidate is just
+    narrating/coding, so the interviewer waits out the long cooldown."""
     controller, _ = make_controller()
     controller.accept_proposal(InterviewerAction(action="ask_question", message="Q1"), now=0.0)
 
-    assert controller.can_speak(now=MIN_COOLDOWN_SECONDS - 1) is False
-    assert controller.can_speak(now=MIN_COOLDOWN_SECONDS) is True
+    assert controller.can_speak(now=OBSERVATION_COOLDOWN_SECONDS - 1) is False
+    assert controller.can_speak(now=OBSERVATION_COOLDOWN_SECONDS) is True
+
+
+def test_reactive_cooldown_is_much_shorter_when_marked_a_conversational_turn():
+    """2026-09-13 hybrid-pacing feature: a genuine back-and-forth reply
+    shouldn't wait out the full observation cooldown."""
+    controller, _ = make_controller()
+    controller.accept_proposal(InterviewerAction(action="ask_question", message="Q1"), now=0.0)
+
+    assert REACTIVE_COOLDOWN_SECONDS < OBSERVATION_COOLDOWN_SECONDS
+    just_before = REACTIVE_COOLDOWN_SECONDS - 1
+    assert controller.can_speak(now=just_before, is_conversational_turn=True) is False
+    assert controller.can_speak(now=REACTIVE_COOLDOWN_SECONDS, is_conversational_turn=True) is True
+    # ...but the same instant is still firmly inside the long cooldown when
+    # the caller does *not* mark it conversational (e.g. a code_update).
+    at_reactive = REACTIVE_COOLDOWN_SECONDS
+    assert controller.can_speak(now=at_reactive, is_conversational_turn=False) is False
+
+
+def test_awaiting_response_is_set_after_asking_a_question():
+    controller, _ = make_controller()
+    assert controller.awaiting_response is False
+    controller.accept_proposal(InterviewerAction(action="ask_question", message="Q1"), now=0.0)
+    assert controller.awaiting_response is True
+
+
+def test_awaiting_response_is_cleared_by_a_spoken_transition_or_hint():
+    controller, _ = make_controller(stage="intro")
+    controller.accept_proposal(InterviewerAction(action="ask_question", message="Q1"), now=0.0)
+    assert controller.awaiting_response is True
+
+    controller.accept_proposal(
+        InterviewerAction(
+            action="transition_stage", stage_transition="clarification", message="OK."
+        ),
+        now=OBSERVATION_COOLDOWN_SECONDS,
+    )
+    assert controller.awaiting_response is False
+
+
+def test_awaiting_response_is_unaffected_by_remain_silent():
+    """A pending question stays pending through a remain_silent turn — and
+    remain_silent must not itself start an awaiting-response window either,
+    since it's also what a non-conversational narration turn resolves to."""
+    controller, _ = make_controller()
+    controller.accept_proposal(InterviewerAction(action="ask_question", message="Q1"), now=0.0)
+    controller.accept_proposal(InterviewerAction(action="remain_silent"), now=5.0)
+    assert controller.awaiting_response is True
 
 
 def test_hint_requested_bypasses_cooldown():
@@ -62,7 +112,7 @@ def test_duplicate_question_is_rejected_even_after_cooldown():
 
     second = controller.accept_proposal(
         InterviewerAction(action="ask_question", message="What is the time complexity???"),
-        now=MIN_COOLDOWN_SECONDS,
+        now=OBSERVATION_COOLDOWN_SECONDS,
     )
     assert second is None
 
@@ -72,7 +122,7 @@ def test_different_question_is_accepted():
     controller.accept_proposal(InterviewerAction(action="ask_question", message="Q1"), now=0.0)
 
     accepted = controller.accept_proposal(
-        InterviewerAction(action="ask_question", message="Q2"), now=MIN_COOLDOWN_SECONDS
+        InterviewerAction(action="ask_question", message="Q2"), now=OBSERVATION_COOLDOWN_SECONDS
     )
     assert accepted is not None
 
@@ -230,7 +280,7 @@ def test_rubric_updates_accumulate_an_append_only_evidence_history():
             rubric_updates={"testing": 2, "approach": 1},
             rubric_evidence="second observation",
         ),
-        now=MIN_COOLDOWN_SECONDS + 10.0,
+        now=OBSERVATION_COOLDOWN_SECONDS + 10.0,
     )
 
     assert len(state.rubric_history) == 2
@@ -240,7 +290,7 @@ def test_rubric_updates_accumulate_an_append_only_evidence_history():
     assert first.timestamp == 10.0
     assert second.categories == {"testing": 2, "approach": 1}
     assert second.evidence == "second observation"
-    assert second.timestamp == MIN_COOLDOWN_SECONDS + 10.0
+    assert second.timestamp == OBSERVATION_COOLDOWN_SECONDS + 10.0
 
     # queryable by category — every entry that touched "testing"
     testing_entries = [entry for entry in state.rubric_history if "testing" in entry.categories]

@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from collections import deque
@@ -312,20 +313,51 @@ async def _force_end_for_time_limit(ws: WebSocket, record: SessionRecord) -> Non
     await ws.close()
 
 
+def _looks_like_direct_address(text: str) -> bool:
+    """Cheap, honest heuristic (2026-09-13) for "the candidate is talking
+    *to* the interviewer right now, not narrating past it" — a trailing
+    question mark, or one of a short list of address words a candidate uses
+    to get the interviewer's attention mid-monologue. Exact-match-on-shape,
+    not real intent classification (same "out of scope for a hackathon
+    MVP" stance as _fingerprint in interview/controller.py) — it will miss
+    real questions phrased as statements and will fire on a rhetorical
+    question, and that is an acceptable trade for a rule this cheap."""
+    stripped = text.strip().lower()
+    if not stripped:
+        return False
+    if stripped.endswith("?"):
+        return True
+    return bool(re.match(r"^(hey|hi|hello|excuse me)\b", stripped))
+
+
 async def _maybe_speak(
     record: SessionRecord,
     settings: Settings,
     *,
     trigger: Trigger = "code_update",
     hint_requested: bool = False,
+    candidate_text: str | None = None,
 ) -> None:
     """Asks the interviewer agent for a proposal and, if the controller
     accepts it, emits whatever event that proposal implies. Silence
     (remain_silent, or any rejected proposal) emits nothing at all — that
     is the intended behaviour (CLAUDE.md: "the interviewer should not
-    speak on every event"), not a missing code path."""
+    speak on every event"), not a missing code path.
+
+    is_conversational_turn (2026-09-13, live-demo feedback: the candidate
+    wants an instant reply mid-dialogue but silence while they're just
+    narrating/coding — see controller.py's cooldown comment) is true when
+    either the interviewer is already waiting on an answer to its own last
+    question, or this utterance itself reads as addressed to the
+    interviewer. code_update never counts — watching code change is
+    observation, never a conversational turn."""
     now = time.time()
-    if not record.controller.can_speak(now=now, hint_requested=hint_requested):
+    is_conversational_turn = trigger == "transcript_final" and (
+        record.controller.awaiting_response or _looks_like_direct_address(candidate_text or "")
+    )
+    if not record.controller.can_speak(
+        now=now, hint_requested=hint_requested, is_conversational_turn=is_conversational_turn
+    ):
         return
 
     provider = get_llm_provider(settings)
@@ -440,7 +472,7 @@ def _make_transcript_callbacks(session_id: str, settings: Settings):
         record.state.transcript.append(entry)
         event = TranscriptFinalEvent(seq=0, text=text, timestamp=timestamp)
         await _emit(record, event.model_dump())
-        await _maybe_speak(record, settings, trigger="transcript_final")
+        await _maybe_speak(record, settings, trigger="transcript_final", candidate_text=text)
 
     return on_partial, on_final
 
@@ -595,7 +627,9 @@ async def interview_socket(ws: WebSocket) -> None:
                 )
                 final = TranscriptFinalEvent(seq=0, text=client_event.text, timestamp=timestamp)
                 await _emit(record, final.model_dump())
-                await _maybe_speak(record, settings, trigger="transcript_final")
+                await _maybe_speak(
+                    record, settings, trigger="transcript_final", candidate_text=text
+                )
                 continue
 
             if isinstance(client_event, CodeUpdateEvent):

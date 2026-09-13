@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 import app.websocket.interview as ws_module
+from app.interview.controller import OBSERVATION_COOLDOWN_SECONDS, REACTIVE_COOLDOWN_SECONDS
 from app.interview.schemas import FinalReview
 from app.interview.state import TranscriptEntry
 from app.main import app
@@ -428,7 +429,7 @@ def test_full_interview_happy_path_start_to_review(monkeypatch):
     review" — chained into one continuous real session, rather than split
     across several smaller tests that each start fresh (as the rest of
     this file does). The clock is monkeypatched (not real controller/state
-    fixtures) so the 30s interviewer cooldown (architecture.md §L rule 1)
+    fixtures) so the interviewer cooldown (architecture.md §L rule 1)
     is genuinely enforced across multiple real triggers in sequence,
     including asserting that an immediate same-instant retrigger produces
     silence — no existing test checks cooldown gating across more than one
@@ -599,6 +600,145 @@ def test_hint_requested_produces_a_hint_response_and_increments_hint_level():
     assert record.state.hint_level == 1
 
 
+def test_looks_like_direct_address():
+    assert ws_module._looks_like_direct_address("Are you still there?") is True
+    assert ws_module._looks_like_direct_address("Hello? Can you hear me?") is True
+    assert ws_module._looks_like_direct_address("So the array is sorted first") is False
+    assert ws_module._looks_like_direct_address("") is False
+    assert ws_module._looks_like_direct_address("   ") is False
+
+
+def test_transcript_final_answering_a_pending_question_uses_the_short_reactive_cooldown(
+    monkeypatch,
+):
+    """2026-09-13 hybrid-pacing feature: once the interviewer has asked a
+    question, the candidate's reply is a genuine conversational turn and
+    should not have to wait out the full observation cooldown."""
+    fake_now = [0.0]
+    monkeypatch.setattr(ws_module.time, "time", lambda: fake_now[0])
+
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+        record = ws_module.sessions.get(session_id)
+        record.state.stage = "clarification"
+
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        first = ws.receive_json()
+        assert first["type"] == "interviewer.transcript"
+        assert ws.receive_json()["type"] == "interviewer.audio.start"
+        assert ws.receive_json()["type"] == "interviewer.audio.end"
+        assert record.controller.awaiting_response is True
+
+        # A different canned response must fire next, or the controller's
+        # own duplicate-question rejection (§L rule 4) would mask whether
+        # the cooldown gate itself let this through.
+        record.state.stage = "testing"
+        # Only REACTIVE_COOLDOWN_SECONDS elapsed — well short of
+        # OBSERVATION_COOLDOWN_SECONDS, which would still block this.
+        fake_now[0] = REACTIVE_COOLDOWN_SECONDS
+        ws.send_json({"type": "dev.simulate_transcript", "text": "No duplicates, all positive."})
+        assert ws.receive_json()["type"] == "transcript.partial"
+        assert ws.receive_json()["type"] == "transcript.final"
+        second = ws.receive_json()
+        assert second["type"] == "interviewer.transcript"
+        assert second["text"] != first["text"]
+
+
+def test_transcript_final_narration_waits_out_the_full_observation_cooldown(monkeypatch):
+    """The counterpart to the reactive test above: once the interviewer
+    isn't waiting on an answer (already made a plain statement), a
+    narration-shaped reply must not jump the queue just because a reply
+    happened to be due — it should wait out the full observation cooldown
+    instead."""
+    fake_now = [0.0]
+    monkeypatch.setattr(ws_module.time, "time", lambda: fake_now[0])
+
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+        record = ws_module.sessions.get(session_id)
+        record.state.stage = "clarification"
+
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        ws.receive_json()  # interviewer.transcript
+        ws.receive_json()  # interviewer.audio.start
+        ws.receive_json()  # interviewer.audio.end
+
+        # Simulates the question having already been answered and
+        # acknowledged (accept_proposal clears awaiting_response on a
+        # spoken transition/hint) — poked directly here for the same
+        # documented reason record.state.stage is poked elsewhere in this
+        # file: MockLLMProvider never proposes transition_stage on its own.
+        record.controller._awaiting_response = False
+
+        fake_now[0] = REACTIVE_COOLDOWN_SECONDS
+        record.state.stage = "testing"
+        narration = "I'm just talking through my code."
+        ws.send_json({"type": "dev.simulate_transcript", "text": narration})
+        assert ws.receive_json()["type"] == "transcript.partial"
+        assert ws.receive_json()["type"] == "transcript.final"
+        # blocked: still inside the observation cooldown, and this
+        # utterance neither answers a pending question nor looks addressed
+        # to the interviewer. Proven the same way other tests in this file
+        # prove silence: the next thing off the wire is unrelated.
+        ws.send_json({"type": "session.resume", "session_id": "does-not-exist", "last_seq": 0})
+        next_message = ws.receive_json()
+        assert next_message["code"] == "session_not_found"
+
+        # ...but it does eventually get a reply once the longer cooldown
+        # genuinely elapses — proving this is pacing, not a stuck gate.
+        fake_now[0] = OBSERVATION_COOLDOWN_SECONDS
+        ws.send_json({"type": "dev.simulate_transcript", "text": "Still just narrating."})
+        assert ws.receive_json()["type"] == "transcript.partial"
+        assert ws.receive_json()["type"] == "transcript.final"
+        assert ws.receive_json()["type"] == "interviewer.transcript"
+        assert ws.receive_json()["type"] == "interviewer.audio.start"
+        assert ws.receive_json()["type"] == "interviewer.audio.end"
+
+
+def test_transcript_final_shaped_like_a_question_uses_the_reactive_cooldown_even_when_not_awaited(
+    monkeypatch,
+):
+    """The other half of the OR: a candidate addressing the interviewer
+    directly (question-shaped utterance) gets the fast path even with no
+    pending question to answer — same setup as the narration test above,
+    but this utterance looks like a direct address instead of narration."""
+    fake_now = [0.0]
+    monkeypatch.setattr(ws_module.time, "time", lambda: fake_now[0])
+
+    with client.websocket_connect("/ws/interview") as ws:
+        ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
+        started = ws.receive_json()
+        session_id = started["session_id"]
+        ws.receive_json()  # interviewer.state (intro)
+        record = ws_module.sessions.get(session_id)
+        record.state.stage = "clarification"
+
+        ws.send_json(
+            {"type": "code.update", "language": "python", "code": "def f(): pass", "timestamp": 1.0}
+        )
+        ws.receive_json()  # interviewer.transcript
+        ws.receive_json()  # interviewer.audio.start
+        ws.receive_json()  # interviewer.audio.end
+        record.controller._awaiting_response = False  # see narration test above
+
+        fake_now[0] = REACTIVE_COOLDOWN_SECONDS
+        record.state.stage = "testing"
+        ws.send_json({"type": "dev.simulate_transcript", "text": "Hello? Are you still there?"})
+        assert ws.receive_json()["type"] == "transcript.partial"
+        assert ws.receive_json()["type"] == "transcript.final"
+        assert ws.receive_json()["type"] == "interviewer.transcript"
+
+
 def test_hint_requested_bypasses_cooldown_but_is_still_capped_at_level_3():
     with client.websocket_connect("/ws/interview") as ws:
         ws.send_json({"type": "session.start", "problem": PROBLEM, "language": "python"})
@@ -724,7 +864,7 @@ def test_session_end_produces_review_ready_with_valid_final_review():
         # test-fixture pattern as the `record.state.stage = ...` poke in
         # test_accepted_action_with_rubric_updates_emits_rubric_updated_event) —
         # replaying a full, cooldown-respecting real-time interview here
-        # would take real wall-clock minutes (MIN_COOLDOWN_SECONDS); this
+        # would take real wall-clock time (OBSERVATION_COOLDOWN_SECONDS); this
         # test only needs transcript/hint/rubric/stage evidence to actually
         # exist by the time session.end runs.
         record.state.transcript.append(

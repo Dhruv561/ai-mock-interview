@@ -15,10 +15,31 @@ import re
 from app.interview.actions import InterviewerAction
 from app.interview.state import InterviewState, RubricEvidenceEntry
 
-# Minimum gap between interviewer utterances, unless a hint was explicitly
-# requested (§L rule 2). Named constant, not scattered magic numbers, so
-# it's easy to tune during demo rehearsal (§L risk).
-MIN_COOLDOWN_SECONDS = 30.0
+# Two-speed cooldown (§L rule 2), not one fixed gap — 2026-09-13, replacing
+# the single MIN_COOLDOWN_SECONDS=30.0 original after live demo feedback in
+# two rounds:
+#
+# 1. A flat 30s floor produced 35-50s silences between an answer and the
+#    interviewer's reply ("not conversational, unlike Claude/Gemini live
+#    chat"). Lowering it to a flat 2s fixed *that* but then meant the
+#    interviewer was just as quick to jump in while the candidate was mid
+#    monologue narrating their solution — the opposite complaint ("if
+#    they're just describing their solution, the interviewer shouldn't say
+#    anything, but a real back-and-forth should be instant").
+# 2. So this is now dynamic: REACTIVE_COOLDOWN_SECONDS applies when the
+#    candidate's utterance is genuinely this turn's conversational reply
+#    (the interviewer just asked something and is waiting, or the candidate
+#    is plainly addressing the interviewer directly, e.g. "can you hear
+#    me?"); OBSERVATION_COOLDOWN_SECONDS applies otherwise (candidate
+#    narrating/coding, nothing addressed to the interviewer) so it stays
+#    quiet and lets them work, per CLAUDE.md principle 4. See
+#    is_conversational_turn's call site in websocket/interview.py's
+#    _maybe_speak for how the two heuristics (awaiting_response / a
+#    question-shaped utterance) decide which speed applies. Both remain
+#    named constants, not scattered magic numbers, for easy demo-time
+#    tuning.
+REACTIVE_COOLDOWN_SECONDS = 2.0
+OBSERVATION_COOLDOWN_SECONDS = 15.0
 MAX_HINT_LEVEL = 3
 RUBRIC_SCORE_MIN = 0
 RUBRIC_SCORE_MAX = 3
@@ -38,21 +59,46 @@ class InterviewController:
         self.state = state
         self._last_spoke_at: float | None = None
         self._asked_fingerprints: set[str] = set()
+        # True right after the interviewer asks a direct question, cleared
+        # once any other kind of accepted action follows (see
+        # accept_proposal). Lets can_speak apply the fast reactive cooldown
+        # to the candidate's very next utterance — the reply this question
+        # was waiting for — without needing a question mark in it.
+        self._awaiting_response = False
+
+    @property
+    def awaiting_response(self) -> bool:
+        return self._awaiting_response
 
     def can_speak(
-        self, *, now: float, hint_requested: bool = False, is_candidate_speaking: bool = False
+        self,
+        *,
+        now: float,
+        hint_requested: bool = False,
+        is_candidate_speaking: bool = False,
+        is_conversational_turn: bool = False,
     ) -> bool:
         """Gates whether it's even worth asking the LLM for a proposal —
         checked before the LLM call, not just before emitting its result,
         so a cooldown also avoids the cost/latency of an unnecessary call
-        (§L rules 1-2)."""
+        (§L rules 1-2).
+
+        `is_conversational_turn` (set by the caller from
+        `awaiting_response` and/or the candidate's utterance looking like a
+        direct address — see websocket/interview.py's _maybe_speak) picks
+        which of the two cooldowns applies; it never bypasses the cooldown
+        entirely the way hint_requested does."""
         if is_candidate_speaking:
             return False
         if hint_requested:
             return True
         if self._last_spoke_at is None:
             return True
-        return (now - self._last_spoke_at) >= MIN_COOLDOWN_SECONDS
+        if is_conversational_turn:
+            cooldown = REACTIVE_COOLDOWN_SECONDS
+        else:
+            cooldown = OBSERVATION_COOLDOWN_SECONDS
+        return (now - self._last_spoke_at) >= cooldown
 
     def accept_proposal(self, action: InterviewerAction, *, now: float) -> InterviewerAction | None:
         """Returns the action to actually execute, or None if rejected.
@@ -66,6 +112,7 @@ class InterviewController:
                 return None
             self._asked_fingerprints.add(fingerprint)
             self._last_spoke_at = now
+            self._awaiting_response = True
             self._apply_rubric_updates(action, now=now)
             return action
 
@@ -75,6 +122,7 @@ class InterviewController:
             self.state.hint_level += 1
             if action.message:
                 self._last_spoke_at = now
+                self._awaiting_response = False
             self._apply_rubric_updates(action, now=now)
             return action
 
@@ -86,10 +134,16 @@ class InterviewController:
             self.state.transition_to(action.stage_transition, now=now)
             if action.message:
                 self._last_spoke_at = now
+                self._awaiting_response = False
             self._apply_rubric_updates(action, now=now)
             return action
 
         if action.action == "remain_silent":
+            # Deliberately does not touch _awaiting_response either way: a
+            # question left unanswered is still pending, and this is also
+            # the case a candidate's non-conversational narration hits on
+            # every turn, so it must not itself start (or reset) the
+            # awaiting-response window.
             return action
 
         return None
