@@ -1,96 +1,56 @@
-# AI Mock Interview
+# LarpCode
 
-A Chrome extension that turns a LeetCode coding problem into a realistic AI-driven technical interview: it listens to you talk through your approach, watches your code as you write it, asks contextual follow-up questions in an interviewer's voice (ElevenLabs), gives tiered hints on request, and produces an evidence-grounded scorecard at the end.
+LarpCode turns a LeetCode style coding problem into a live technical interview. You talk through your approach out loud, write code as you normally would, and an AI interviewer listens, watches your code change, asks follow up questions in a real voice, gives you a hint when you ask for one, and writes up a review grounded in what actually happened in the session.
 
-LeetCode stays the main workspace. The extension adds a persistent right-side interview panel — not a separate chatbot tab.
+LeetCode stays the workspace. LarpCode adds a panel next to it, not a separate app.
 
-## Project status
+Built for a hackathon under the "create a new business capability" track: interview practice with an attentive, code aware interviewer, on demand, on the problem you're already solving.
 
-**The full MVP pipeline is built, plus a resizable/multi-layout panel and a live backend deployment.** LeetCode problem/code extraction, the real-time WebSocket transport, mic capture with Deepgram speech-to-text, the backend interview state machine, an AI interviewer (Anthropic Claude, with a deterministic mock fallback), ElevenLabs text-to-speech, static code analysis, tiered hints, an evidence-based live rubric, an evidence-grounded final review, screen/tab recording, session persistence, a resizable/preset-switchable interview panel, and Docker/CI backend deployment are all implemented and covered by automated tests against mock providers. 19 features are tracked in total; most are `VERIFIED`, several are `DONE`, and the backend deployment (Feature 19) is live and externally confirmed.
+## How it was built
 
-`VERIFIED` is not `DONE`: most features (05, 08-19) are implemented and tested end-to-end against mock providers, but still need either a live pass with real `ANTHROPIC_API_KEY`/`DEEPGRAM_API_KEY`/`ELEVENLABS_API_KEY`/`DATABASE_URL` values, or (Features 17/18) a manual real-browser click-through, before they can be marked `DONE` — that's a credentials/manual-verification gap, not missing implementation. See `progress.md` for the current dashboard and `FEATURE_PROGRESS.md` for full per-feature acceptance criteria and status. `DEMO.md` has a step-by-step demo rehearsal script; `DEPLOY.md` covers the live backend deployment.
+An extension paired with a small backend.
 
-## Documentation map
+Extension (`extension/`): Vite, React, TypeScript, Tailwind, running as a content script on LeetCode pages. Reads the problem and code directly from the page, captures microphone (and optionally screen or tab) audio, and owns session state.
 
-| File | Purpose |
-|---|---|
-| `PRD.md` | Product requirements — the source of truth for *what* to build |
-| `CLAUDE.md` | Operating instructions for AI-assisted development on this repo |
-| `architecture.md` | Living technical design — the source of truth for *how* it's built |
-| `progress.md` | Project dashboard: current phase, decisions log, blockers |
-| `TODO.md` | Phase-ordered, granular task breakdown |
-| `FEATURE_PROGRESS.md` | Authoritative per-feature checkpoint records |
-| `DEMO.md` | Step-by-step demo rehearsal script |
-| `DEPLOY.md` | Load-unpacked extension steps + the live hosted-backend deployment |
-| `docs/ui-reference.png` | Visual target for the interview panel |
+Backend (`backend/`): FastAPI, Python, managed with `uv`. Holds interview state, decides when the interviewer should speak, and talks to the model and voice providers behind swappable, mockable interfaces.
 
-## Architecture at a glance
+The default interview runs on a single hosted ElevenLabs Conversational AI agent handling speech to text, reasoning, voice, and turn taking together. An earlier pipeline built from separate pieces (Deepgram, Anthropic Claude, ElevenLabs, plus a deterministic controller) still exists behind a build flag and is what produces tiered hints and a fuller live rubric.
 
-```text
-Chrome Extension (content script owns UI + media + WebSocket)
-  ├─ LeetCode adapter: problem extraction, live code reading
-  ├─ Interview panel: React, Context+reducer, Tailwind, shadow-DOM mounted
-  └─ Media: mic (getUserMedia) + optional screen/tab (getDisplayMedia)
-         │
-         │  single WebSocket, typed JSON events + binary audio frames
-         ▼
-FastAPI backend
-  ├─ Interview state machine (explicit stages, deterministic transitions)
-  ├─ Interview controller (decides: silent / ask / hint / transition — enforces product rules)
-  ├─ Interviewer + evaluator agents (Anthropic Claude, structured JSON output)
-  ├─ Code analysis (Python AST for Python, LLM-only for other languages)
-  ├─ Speech-to-text (Deepgram, streaming)
-  ├─ Text-to-speech (ElevenLabs, streaming)
-  └─ Persistence (Postgres/Supabase in prod, in-memory in local dev)
-```
+Every provider integration sits behind an interface with a deterministic mock, so the whole thing runs with zero API keys.
 
-Full detail, including per-subsystem responsibilities, inputs/outputs, testing strategy, and risks, is in `architecture.md`.
+## Getting started
 
-## Repository layout
-
-```text
-extension/   Chrome extension — Vite + React + TypeScript + Tailwind (npm workspace)
-backend/     FastAPI backend — Python, managed with uv
-shared/      Hand-mirrored event schemas (Zod on the TS side, Pydantic on the Python side; npm workspace)
-scripts/     dev.sh (run everything locally), check.sh (lint/type/test/build)
-docs/        Design reference and supporting docs
-```
-
-## Local development
-
-Prerequisites: Node 20+, Python 3.11+, [`uv`](https://docs.astral.sh/uv/).
+Prerequisites: Node 20 or later, Python 3.11 or later, and [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-cp .env.example backend/.env     # NOTE: backend/, not the repo root — see below
-npm install --legacy-peer-deps   # see note below
+cp .env.example backend/.env     # note: backend/, not the repo root
+npm install --legacy-peer-deps
 (cd backend && uv sync)
-./scripts/dev.sh   # runs backend (uv) + extension dev build (npm) concurrently
+./scripts/dev.sh   # runs the backend and the extension dev build together
 ```
 
-`--legacy-peer-deps` is currently required: `npm install` otherwise hits a known npm/arborist resolver crash on vitest's optional browser-mode peer packages. Not specific to any version choice made here — see `progress.md`'s decisions log.
+`--legacy-peer-deps` is needed because a plain `npm install` currently hits a known npm resolver crash on vitest's optional browser mode peer packages.
 
-**The env file must live at `backend/.env`, not the repo root.** `scripts/dev.sh` starts the backend with `cd backend`, and pydantic-settings resolves `env_file=".env"` against the process working directory — so a root-level `.env` is silently ignored and every key in it appears unset. Verified empirically; easy to lose an hour to.
+The environment file has to live at `backend/.env`, not the repo root. The dev script starts the backend from inside `backend/`, and a root level `.env` gets silently ignored.
 
-By default `USE_MOCK_PROVIDERS=true`, so the entire happy path runs with **no API keys at all**. Two things to know when you do add a key:
+By default `USE_MOCK_PROVIDERS=true`, so the full flow runs with no API keys at all. Add a real key and that provider switches over automatically. Settings are cached, so a changed key needs a real backend restart.
 
-- `USE_MOCK_PROVIDERS=true` overrides **every** key, so adding one changes nothing until you also set it to `false`.
-- Each provider then falls back to its own mock independently (`if use_mock_providers or not <key>`), so setting only `DEEPGRAM_API_KEY` gives you real speech-to-text while the interviewer LLM stays mocked. You don't have to enable everything at once.
-- `get_settings()` is `@lru_cache`d, so a changed key needs a real backend restart — uvicorn's `--reload` will not pick it up.
+To load the extension in Chrome: build it with `npm run --workspace extension build`, then go to `chrome://extensions`, turn on Developer mode, choose Load unpacked, and select `extension/dist`. Reload the extension from that page after any rebuild.
 
-See `architecture.md` §S.
+With the backend running, open a LeetCode problem and click Start AI Interview. The panel's status badge should read BACKEND CONNECTED.
 
-To load the extension in Chrome: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist` (run `npm run --workspace extension build` first, or use `npm run --workspace extension dev` for a watch build). Reload the extension from that page after any rebuild — a manifest or service-worker change in particular does not hot-reload.
+To run the full check suite (lint, typecheck, test, build for both projects):
 
-The panel connects to a live local backend: start the backend, open a LeetCode problem, click **Start AI Interview**, and the header badge should reach `BACKEND CONNECTED`.
+```bash
+./scripts/check.sh
+```
 
-To run all checks (lint/typecheck/test/build, both projects): `./scripts/check.sh`.
+## Project structure
 
-## Environment variables
-
-See `.env.example` for the full list, documented in `architecture.md` §U. Provider secrets (Anthropic, Deepgram, ElevenLabs, Supabase) are backend-only and are never bundled into the extension.
-
-`.env` and `.env.*` are gitignored at any depth (with `.env.example` excepted), so `backend/.env` cannot be committed. The test suite forces mock providers via `backend/tests/conftest.py` — without that, a real key in `backend/.env` makes the suite open billable connections to live third-party APIs.
-
-## Contributing / workflow
-
-This project follows the development workflow and stop protocol defined in `CLAUDE.md`: work proceeds in small vertical slices, each feature has a checkpoint record in `FEATURE_PROGRESS.md`, and `progress.md` is kept current after every meaningful slice.
+```text
+extension/   Chrome extension. Vite, React, TypeScript, Tailwind
+backend/     FastAPI backend, Python, managed with uv
+shared/      Hand mirrored event schemas (Zod on the TS side, Pydantic on the Python side)
+scripts/     dev.sh runs everything locally, check.sh runs lint/type/test/build
+docs/        Design reference and supporting docs
+```
